@@ -116,7 +116,7 @@ export class OpenAiAdapter implements ModelAdapter {
           : {}),
       }, input.signal ? { signal: input.signal } : undefined);
     } catch (error) {
-      // The request itself is cancelled, so no further tokens are billed.
+      // Cancel local work on lease loss; provider-side processing and billing may continue.
       if (input.signal?.aborted) throw new LeaseLostError(409, 'The model request was cancelled because the job lease was lost');
       const status = (error as any)?.status;
       throw new WorkerError('MODEL_CALL_FAILED', `Model call failed: ${(error as Error).message}`, status === 429 || status >= 500);
@@ -139,8 +139,10 @@ export class OpenAiAdapter implements ModelAdapter {
         modelCalls: 1,
         inputTokens: typeof response?.usage?.prompt_tokens === 'number' ? response.usage.prompt_tokens : null,
         outputTokens: typeof response?.usage?.completion_tokens === 'number' ? response.usage.completion_tokens : null,
-        // Provider pricing is not knowable here; unknown cost stays null rather than zero.
-        cost: null,
+        // Preserve reported cost, including free calls; never infer unknown pricing.
+        cost: typeof response?.usage?.cost === 'number' && Number.isFinite(response.usage.cost) && response.usage.cost >= 0
+          ? response.usage.cost
+          : null,
       },
     };
   }
