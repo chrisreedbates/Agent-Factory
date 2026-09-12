@@ -43,15 +43,15 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 | --- | --- |
 | `compile_manifest` | The real model drafts the narrative role; structural fields (team, manager, tools, grants, budget) come from the governance proposal. The assembled manifest is validated against the shared `AgentManifest` schema. |
 | `provision_agent` / `reconfigure_agent` | Runs real probes for the mandatory checks and returns `steps`, `checks` and `resources`. |
-| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. Produces a published deliverable and a reply. |
-| `learn` | The model proposes one grounded lesson; the worker persists an artifact and the agent's own episodic memory with provenance. |
-| `retire_agent` | Publishes a retirement record and confirms runtime disablement and knowledge preservation. |
+| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. The agent's scoped memory is retrieved and given to the model, and a published deliverable plus a reply are required. |
+| `learn` | The model proposes one grounded lesson from prior persisted evidence; the worker persists an artifact and the agent's own episodic memory whose provenance is the prior evidence, not itself. |
+| `retire_agent` | Verifies durable knowledge by reading it back, writes and re-reads a runtime-disable marker, transfers consultant knowledge to `knowledgeRecipientIds`, and publishes a retirement record. |
 
 **Budget.** Every non-retirement job reserves before model or tool execution and settles afterwards. Model/tool observations require an outstanding reservation, and completion requires settled usage with no outstanding reservation for the attempt.
 
 **Artifacts.** Files are written to `<agentId>/<jobId>/<attempt>/<name>`, hashed with SHA-256 and published with the current lease. Accepted artifacts are immutable; the API re-reads and verifies the bytes.
 
-**Enforcement.** The model's tool calls are never trusted. Every call must name a tool that was offered for this attempt, pass argument validation, happen under a live lease, and still be granted by the control plane (`getAgent` is re-read immediately before the operation for `run_task`/`learn`). Undeclared, revoked or cancelled operations abort or are refused, never executed.
+**Enforcement.** The model's tool calls are never trusted. Every call must name a tool that was offered for this attempt, pass argument validation, happen under a live lease, and still be granted by the control plane (`getAgent` is re-read immediately before the operation for `run_task`/`learn`). Undeclared, revoked or cancelled operations abort or are refused, never executed. The lease `AbortSignal` is threaded through the tool loop into the provider request, so a lost lease cancels an in-flight model call instead of billing it.
 
 **Evidence.** Task, learning and verification outcomes reference persisted artifact and event IDs from the same agent, job and attempt. The worker cannot fabricate that authority because the API resolves every reference. Task completion requires the model to name a deliverable it actually wrote, that deliverable to verify on read-back, and any approved briefs to have been read.
 
@@ -61,10 +61,10 @@ Provisioning reports all mandatory check names: `runtime`, `model`, `tools`, `au
 
 - `runtime` / `memory` — durable write, read-back and hash comparison, with symlink-safe, exclusively created files.
 - `model` — the model must echo a fresh nonce exactly, so partial or negated replies fail.
-- `tools` / `permissions` — real reads of the agent's scoped briefs plus a denied cross-agent read and allowlist validation.
+- `tools` / `permissions` — real reads of the agent's scoped briefs (`<sourceRoot>/<agentId>`), symlink-safe directory listing, a denied cross-agent read and allowlist validation.
 - `authentication` — the control plane must reject a forged worker credential (401) while accepting the current lease.
-- `communication` / `escalation` — the model must produce a manager-addressed reply and a policy-approved escalation, both persisted and verified.
-- `evaluation` — a deterministic verdict over the recorded artifacts, persisted before activation.
+- `communication` / `escalation` — the agent must send a real message through `POST /v1/messages` and a policy-approved escalation through `POST /v1/escalations`; the check passes only when the control plane actually persisted them, otherwise the agent stays `REMEDIATING`.
+- `evaluation` — a real model judgement that must apply every `manifest.evaluation.criteria` entry and cite persisted evidence from the attempt; the worker rejects uncited or failed criteria.
 - `restart` — a **separate process** re-reads the artifact and must reproduce its SHA-256.
 - `end_to_end` — one real model run that reads an approved brief, writes a deliverable and verifies the read-back hash.
 

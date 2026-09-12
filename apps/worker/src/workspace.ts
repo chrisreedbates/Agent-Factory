@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import { lstat, mkdir, open, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { WorkerError } from './errors.js';
@@ -22,6 +23,9 @@ function contained(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
   return rel.length > 0 && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
+
+/** O_NOFOLLOW is a no-op on Windows, where the explicit lstat walk is the guard. */
+const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
 
 /**
  * Reject empty, absolute, traversal or otherwise unsafe relative paths. The
@@ -64,6 +68,10 @@ export class Workspace {
     return join(this.artifactRoot, safeRelativePath(agentId), 'output');
   }
 
+  private boundaryFor(root: FileRoot): string {
+    return resolve(root === 'briefs' ? this.sourceRoot : this.artifactRoot);
+  }
+
   private resolveWithin(root: string, relativePath: string): string {
     const base = resolve(root);
     const candidate = resolve(base, safeRelativePath(relativePath));
@@ -73,13 +81,22 @@ export class Workspace {
     return candidate;
   }
 
-  /** Reject symbolic links at every existing path component under `root`. */
-  private async assertNoSymlink(root: string, relativePath: string): Promise<void> {
-    const parts = safeRelativePath(relativePath).split('/');
-    let current = resolve(root);
-    const rootStat = await lstat(current).catch(() => null);
-    if (rootStat?.isSymbolicLink()) throw new WorkerError('INVALID_PATH', 'The configured root may not be a symbolic link');
-    for (const part of parts) {
+  /**
+   * Reject symbolic links on every existing component from the configured
+   * boundary down to the target. This must run before any read or directory
+   * walk so a link planted anywhere in the path cannot redirect access.
+   */
+  private async assertSafePath(boundary: string, target: string): Promise<void> {
+    const base = resolve(boundary);
+    const resolved = resolve(target);
+    if (resolved !== base && !contained(base, resolved)) {
+      throw new WorkerError('INVALID_PATH', 'Path escapes its configured root');
+    }
+    const baseInfo = await lstat(base).catch(() => null);
+    if (baseInfo?.isSymbolicLink()) throw new WorkerError('INVALID_PATH', 'The configured root may not be a symbolic link');
+    if (resolved === base) return;
+    let current = base;
+    for (const part of relative(base, resolved).split(sep)) {
       current = join(current, part);
       const info = await lstat(current).catch(() => null);
       if (!info) break;
@@ -98,10 +115,10 @@ export class Workspace {
       throw new WorkerError('ARTIFACT_TOO_LARGE', `Artifacts may not exceed ${MAX_ARTIFACT_BYTES} bytes`);
     }
     const relativePath = `${this.jobPrefix(agentId, jobId, attempt)}/${safeRelativePath(name)}`;
-    await this.assertNoSymlink(this.artifactRoot, relativePath);
     const absolutePath = this.resolveWithin(this.artifactRoot, relativePath);
+    await this.assertSafePath(this.artifactRoot, absolutePath);
     await mkdir(dirname(absolutePath), { recursive: true });
-    await this.assertNoSymlink(this.artifactRoot, relativePath);
+    await this.assertSafePath(this.artifactRoot, absolutePath);
     let handle;
     try {
       // Exclusive creation: two attempts can never race to write the same path.
@@ -126,23 +143,29 @@ export class Workspace {
   async writeWorkspaceFile(agentId: string, name: string, content: string): Promise<string> {
     const relativePath = safeRelativePath(name);
     const root = this.rootFor('workspace', agentId);
-    await this.assertNoSymlink(root, relativePath);
     const absolute = this.resolveWithin(root, relativePath);
+    await this.assertSafePath(this.artifactRoot, absolute);
     await mkdir(dirname(absolute), { recursive: true });
-    await this.assertNoSymlink(root, relativePath);
+    await this.assertSafePath(this.artifactRoot, absolute);
     await open(absolute, 'w').then(handle => handle.write(content).finally(() => handle.close()));
     return relativePath;
   }
 
   async read(root: FileRoot, agentId: string, relativePath: string): Promise<string> {
     const base = this.rootFor(root, agentId);
-    await this.assertNoSymlink(base, relativePath);
     const absolute = this.resolveWithin(base, relativePath);
+    await this.assertSafePath(this.boundaryFor(root), absolute);
     try {
       const info = await stat(absolute);
       if (!info.isFile()) throw new WorkerError('NOT_A_FILE', `${relativePath} is not a regular file`);
       if (info.size > MAX_ARTIFACT_BYTES) throw new WorkerError('FILE_TOO_LARGE', `${relativePath} exceeds the readable size limit`);
-      return await readFile(absolute, 'utf8');
+      // No-follow open closes the check/use race for the final component.
+      const handle = await open(absolute, constants.O_RDONLY | noFollow);
+      try {
+        return await handle.readFile('utf8');
+      } finally {
+        await handle.close();
+      }
     } catch (error) {
       if (error instanceof WorkerError) throw error;
       throw new WorkerError('FILE_UNAVAILABLE', `Cannot read ${root}:${relativePath}: ${(error as Error).message}`);
@@ -152,6 +175,8 @@ export class Workspace {
   async list(root: FileRoot, agentId: string, directory = '.'): Promise<{ path: string; size: number }[]> {
     const base = this.rootFor(root, agentId);
     const start = directory === '.' ? base : this.resolveWithin(base, directory);
+    // Guard the requested start before readdir so a symlinked directory cannot be traversed.
+    await this.assertSafePath(this.boundaryFor(root), start);
     const results: { path: string; size: number }[] = [];
     const walk = async (current: string): Promise<void> => {
       let entries;

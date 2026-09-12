@@ -1,6 +1,6 @@
 import { REQUIRED_VERIFICATION_CHECKS } from '../src/evidence.js';
 import { EMPTY_USAGE, type ModelAdapter, type ModelMessage, type ModelTurn, type ModelUsage, type ToolCall, type ToolDefinition } from '../src/model.js';
-import { WorkerError } from '../src/errors.js';
+import { LeaseLostError, WorkerError } from '../src/errors.js';
 import type { ControlPlane } from '../src/client.js';
 import type { ClaimedJob, Evidence, Grant, JobOutcome, PublishedArtifact, Scope, UsageReservation } from '../src/types.js';
 
@@ -69,6 +69,10 @@ export class FakeControlPlane implements ControlPlane {
   readonly reservations = new Map<string, { id: string; jobId: string; attempt: number; modelCalls: number; status: 'RESERVED' | 'SETTLED' }>();
   readonly memories: Record<string, any>[] = [];
   readonly hires: Record<string, any>[] = [];
+  readonly messages: Record<string, any>[] = [];
+  readonly escalations: Record<string, any>[] = [];
+  /** Set true to simulate a control plane that refuses delegated verification sends. */
+  denyVerificationSend = false;
   readonly completed: { job: ClaimedJob; outcome: JobOutcome; order: number }[] = [];
   readonly failed: { job: ClaimedJob; code: string; message: string; retryable: boolean; order: number }[] = [];
   readonly ops: string[] = [];
@@ -208,6 +212,18 @@ export class FakeControlPlane implements ControlPlane {
       this.hires.push({ id, requestingAgentId: job.agentId, ...body });
       return { id } as T;
     }
+    if (operationId === 'createMessage') {
+      if (this.denyVerificationSend) throw new WorkerError('DELEGATION_FORBIDDEN', 'Only agent task or learning execution may act as an agent', false);
+      const id = this.nextId('message');
+      this.messages.push({ id, agentId: job.agentId, attempt: job.attempt, ...body });
+      return { id } as T;
+    }
+    if (operationId === 'createEscalation') {
+      if (this.denyVerificationSend) throw new WorkerError('AGENT_INACTIVE', 'Only ACTIVE agents may start work', false);
+      const id = this.nextId('escalation');
+      this.escalations.push({ id, agentId: job.agentId, attempt: job.attempt, ...body });
+      return { id } as T;
+    }
     throw new Error(`Unexpected delegated operation ${operationId}`);
   }
 
@@ -230,6 +246,8 @@ export interface ScriptedTurn {
 export class FakeModel implements ModelAdapter {
   readonly name = 'test-model';
   readonly calls: { system: string; messages: ModelMessage[]; tools: ToolDefinition[] }[] = [];
+  /** Number of in-flight provider requests cancelled by the lease signal. */
+  abortedTurns = 0;
   private readonly turns: ScriptedTurn[];
 
   constructor(
@@ -242,8 +260,19 @@ export class FakeModel implements ModelAdapter {
 
   private dynamic: ((input: { system: string; messages: ModelMessage[] }) => ScriptedTurn) | null;
 
-  async turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[] }): Promise<ModelTurn> {
-    if (this.options.delayMs) await new Promise(resolvePromise => setTimeout(resolvePromise, this.options.delayMs));
+  async turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[]; signal?: AbortSignal }): Promise<ModelTurn> {
+    if (this.options.delayMs) {
+      await new Promise<void>((resolvePromise, rejectPromise) => {
+        const timer = setTimeout(() => { input.signal?.removeEventListener('abort', onAbort); resolvePromise(); }, this.options.delayMs);
+        const onAbort = () => {
+          clearTimeout(timer);
+          this.abortedTurns++;  // the provider request is cancelled, so no further spend
+          rejectPromise(new LeaseLostError(409, 'fake model cancelled by lease loss'));
+        };
+        if (input.signal?.aborted) { onAbort(); return; }
+        input.signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    }
     this.calls.push({ system: input.system, messages: input.messages, tools: input.tools ?? [] });
     const next = this.dynamic ? this.dynamic(input) : this.turns.shift();
     if (!next) throw new WorkerError('MODEL_CALL_FAILED', 'fake model ran out of scripted turns', false);

@@ -183,6 +183,11 @@ test('provisioning runs a real verified workflow and emits every mandatory check
       const last = input.messages.at(-1);
       return { content: last && last.role === 'user' ? last.content : '' };
     }
+    if (input.system.includes('evaluate a provisioning run')) {
+      const payload = JSON.parse(String(input.messages.at(-1)?.content ?? '{}')) as { criteria?: string[]; evidenceIds?: string[] };
+      const evidenceId = (payload.evidenceIds ?? ['missing'])[0];
+      return { content: JSON.stringify({ passed: true, criteria: (payload.criteria ?? []).map(criterion => ({ criterion, passed: true, evidenceIds: [evidenceId] })) }) };
+    }
     const toolResults = input.messages.filter(message => message.role === 'tool').length;
     if (toolResults === 0) return { toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { root: 'briefs', path: 'brief.md' } }] };
     if (toolResults === 1) return { toolCalls: [{ id: 'call-write', name: 'write_file', arguments: { path: 'provision-report.md', content: '# Provisioning report\nGrounded in brief.md.' } }] };
@@ -209,6 +214,34 @@ test('provisioning runs a real verified workflow and emits every mandatory check
     assert.ok(resourceTypes.includes('runtime'));
     assert.ok(rig.client.ops.indexOf('settleBudget') < rig.client.ops.indexOf('completeJob'));
     assert.ok(rig.client.ops.includes('probeUnauthorized'), 'authentication is a real boundary probe');
+    // Communication and escalation go through real persisted control-plane paths.
+    assert.equal(rig.client.messages.length, 1, 'a real message must be persisted');
+    assert.equal(rig.client.escalations.length, 1, 'a real escalation must be persisted');
+    assert.ok(rig.client.ops.includes('createMessage'));
+    assert.ok(rig.client.ops.includes('createEscalation'));
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('a control plane that refuses the verification send leaves the agent remediating', async () => {
+  const model = new FakeModel(input => {
+    if (input.system.includes('self-check')) {
+      const last = input.messages.at(-1);
+      return { content: last && last.role === 'user' ? last.content : '' };
+    }
+    const toolResults = input.messages.filter(message => message.role === 'tool').length;
+    if (toolResults === 0) return { toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { root: 'briefs', path: 'brief.md' } }] };
+    if (toolResults === 1) return { toolCalls: [{ id: 'call-write', name: 'write_file', arguments: { path: 'provision-report.md', content: '# Report' } }] };
+    return { content: JSON.stringify({ summary: 'done', reply: 'verified', deliverable: 'provision-report.md', escalation: { trigger: 'missing evidence', situation: 's', recommendation: 'r' } }) };
+  });
+  const rig = await makeRig(model);
+  try {
+    rig.client.denyVerificationSend = true;
+    rig.client.queue.push(makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(await rig.runtime.runOnce(), true);
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'COMMUNICATION_UNVERIFIED');
   } finally {
     await rig.cleanup();
   }
@@ -236,6 +269,7 @@ test('renewal loss aborts the active attempt without further spend or a reported
     assert.equal(await runtime.runOnce(), true);
     assert.equal(client.completed.length, 0, 'a lost attempt must not complete');
     assert.equal(client.failed.length, 0, 'a lost lease is abandoned, not reported as a job failure');
+    assert.ok(model.abortedTurns >= 1, 'the in-flight provider request must be cancelled on lease loss');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -270,6 +304,65 @@ test('learn fails rather than manufacturing a lesson when no prior evidence exis
     assert.equal(await rig.runtime.runOnce(), true);
     assert.equal(rig.client.completed.length, 0);
     assert.equal(rig.client.failed.at(-1)!.code, 'NO_PRIOR_EVIDENCE');
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('retirement performs and verifies cleanup and consultant knowledge transfer', async () => {
+  const rig = await makeRig(new FakeModel([]));
+  try {
+    const manifest = makeManifest({
+      agent: { id: 'agent-1', name: 'Consultant', type: 'consultant' },
+      consultant: { deliverable: 'Review', deadline: null, terminationCondition: 'Accepted.', knowledgeRecipientIds: ['agent-2'] },
+    });
+    // Seed durable knowledge that retirement must preserve, verify and transfer.
+    await rig.workspace.writeWorkspaceFile('agent-1', 'memory/working.json', '{"lesson":"keep me"}');
+    const job = makeJob('retire_agent', { agent: makeAgent({ status: 'TERMINATING', manifest }), reason: 'Mission complete.' });
+    await runJob(rig, job);
+
+    assert.equal(rig.client.failed.length, 0, JSON.stringify(rig.client.failed));
+    const outcome = rig.client.completed.at(-1)!.outcome as any;
+    assert.equal(outcome.kind, 'retire_agent');
+    assert.equal(outcome.runtimeDisabled, true);
+    assert.equal(outcome.knowledgePreserved, true);
+    assert.equal(outcome.credentialsRevoked, true);
+    assert.ok(outcome.evidence.artifactIds.length >= 1);
+    // The retirement marker and the transferred knowledge really exist on disk.
+    assert.match(await rig.workspace.read('workspace', 'agent-1', 'runtime-disabled.json'), /disabledAt/);
+    assert.match(await rig.workspace.read('workspace', 'agent-2', 'consultant-transfer/agent-1/index.json'), /working\.json/);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('retirement fails when there is no durable knowledge to verify', async () => {
+  const rig = await makeRig(new FakeModel([]));
+  try {
+    rig.client.queue.push(makeJob('retire_agent', { agent: makeAgent({ status: 'TERMINATING' }), reason: 'No knowledge.' }));
+    assert.equal(await rig.runtime.runOnce(), true);
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'KNOWLEDGE_MISSING');
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('run_task includes retrieved scoped memory in the model context', async () => {
+  const model = agentLoopModel({ summary: 'Used the prior lesson.', reply: 'done', deliverable: 'report.md' }, 'report.md');
+  const rig = await makeRig(model);
+  try {
+    rig.client.memoryEntries = [{ id: 'memory-1', title: 'Prior lesson', category: 'episodic', content: 'ALWAYS cite the approved brief.' }];
+    const job = makeJob('run_task', {
+      agent: makeAgent(),
+      task: { id: 'task-1', objective: 'Write a report', constraints: [], deliverable: 'report.md', deadline: null },
+      inputMessage: null,
+    }, { taskId: 'task-1' });
+    await runJob(rig, job);
+
+    assert.equal(rig.client.failed.length, 0, JSON.stringify(rig.client.failed));
+    const prompt = String(model.calls[0].messages[0].content ?? '');
+    assert.match(prompt, /ALWAYS cite the approved brief\./);
   } finally {
     await rig.cleanup();
   }

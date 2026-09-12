@@ -369,6 +369,7 @@ export class JobRunner {
       prompt: input.prompt,
       tools: [...offered.values()].map(spec => spec.definition),
       maxRounds: input.maxRounds,
+      signal: guard.signal,
       handleTool,
       onTurn: async turn => {
         ledger.record(turn.usage);
@@ -391,6 +392,7 @@ export class JobRunner {
     const team = (teams as Record<string, any>[]).find(candidate => candidate.id === hiringRequest.proposal.teamId);
     guard.assertLive();
     const turn = await this.deps.model.turn({
+      signal: guard.signal,
       system: [
         'You compile a natural-language hiring request into a reviewed agent role.',
         'Respond with a single JSON object and no prose. Keys: name, roleTitle, mission, responsibilities,',
@@ -501,8 +503,8 @@ export class JobRunner {
     const agent = payload.agent as Record<string, any>;
     const manifest = payload.manifest as Record<string, any>;
     const maxRounds = Math.min(3, this.deps.config.maxToolRounds);
-    // One strict model self-check plus the bounded end-to-end tool loop.
-    await ledger.reserve(1 + maxRounds);
+    // A strict self-check, the bounded end-to-end tool loop and the evaluation judgement.
+    await ledger.reserve(2 + maxRounds);
 
     const artifacts: string[] = [];
     const events: string[] = [];
@@ -525,6 +527,7 @@ export class JobRunner {
     const selfCheck = await this.deps.model.turn({
       system: 'You are a runtime self-check. Reply with exactly the token the user sends, and nothing else.',
       messages: [{ role: 'user', content: nonce }],
+      signal: guard.signal,
     });
     ledger.record(selfCheck.usage);
     const echoed = (selfCheck.content ?? '').trim();
@@ -617,16 +620,31 @@ export class JobRunner {
     events.push(endToEndEvent);
     pass('end_to_end', makeEvidence({ artifactIds: [deliverableArtifact.id], eventIds: [...loop.eventIds, endToEndEvent], taskId: job.taskId, jobId: job.jobId, summary: `The model read ${loop.readCount} brief(s) and produced verified artifact ${deliverableArtifact.path}.` }));
 
-    // communication: the agent produced a real manager reply, validated against its communication policy.
+    // communication: send a real message through the persisted control-plane
+    // path and pass only when the API actually stored it.
     const reply = typeof draft.reply === 'string' ? draft.reply.trim() : '';
     if (!reply) throw new WorkerError('COMMUNICATION_UNVERIFIED', 'The provisioning run did not produce a manager reply', false);
     if (manifest.communication.canContactManager !== true) throw new WorkerError('COMMUNICATION_POLICY', 'The manifest does not authorize manager contact', false);
-    const communicationArtifact = await this.publish(job, guard, 'communication-draft.json', JSON.stringify({ to: manifest.organization.managerId, reply }, null, 2), 'application/json');
-    const communicationEvent = await this.observe(job, guard, 'verification.communication', 'Produced a policy-compliant manager reply and persisted it', { managerId: manifest.organization.managerId });
-    artifacts.push(communicationArtifact.id); events.push(communicationEvent);
-    pass('communication', makeEvidence({ artifactIds: [communicationArtifact.id], eventIds: [communicationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'The agent produced a manager-addressed reply under its approved communication policy.' }));
+    guard.assertLive();
+    let verificationMessage: { id: string };
+    try {
+      verificationMessage = await this.deps.client.asAgent<{ id: string }>(job, 'createMessage', '/v1/messages', {
+        recipientId: manifest.organization.managerId,
+        recipientKind: manifest.organization.managerKind === 'human' ? 'human' : 'agent',
+        content: reply,
+        actionable: false,
+        inReplyTo: null,
+        taskId: null,
+      });
+    } catch (error) {
+      if (error instanceof LeaseLostError) throw error;
+      throw new WorkerError('COMMUNICATION_UNVERIFIED', `The control plane did not persist a verification message: ${(error as Error).message}`, false);
+    }
+    const communicationEvent = await this.observe(job, guard, 'verification.communication', 'Sent and persisted a real message through the control-plane path', { messageId: verificationMessage.id, recipientId: manifest.organization.managerId });
+    events.push(communicationEvent);
+    pass('communication', makeEvidence({ eventIds: [communicationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Persisted control-plane message ${verificationMessage.id} to ${manifest.organization.managerId}.` }));
 
-    // escalation: a real blocker routed to a policy-approved trigger and manager.
+    // escalation: persist a real escalation through the control-plane path.
     const escalation = (draft.escalation ?? {}) as EscalationDraft;
     const approvedTriggers = manifest.escalation.triggers as string[];
     const trigger = approvedTriggers.find(candidate => candidate.toLowerCase() === String(escalation.trigger ?? '').trim().toLowerCase());
@@ -635,32 +653,78 @@ export class JobRunner {
     if (!trigger || !situation || !recommendation) {
       throw new WorkerError('ESCALATION_UNVERIFIED', 'The provisioning run did not produce a valid, policy-approved escalation', false);
     }
-    const escalationArtifact = await this.publish(job, guard, 'escalation-draft.json', JSON.stringify({ to: manifest.escalation.managerId, trigger, situation, recommendation }, null, 2), 'application/json');
-    const escalationEvent = await this.observe(job, guard, 'verification.escalation', 'Produced a policy-approved escalation and persisted it', { managerId: manifest.escalation.managerId, trigger });
-    artifacts.push(escalationArtifact.id); events.push(escalationEvent);
-    pass('escalation', makeEvidence({ artifactIds: [escalationArtifact.id], eventIds: [escalationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Produced escalation "${trigger}" routed to ${manifest.escalation.managerId}.` }));
+    guard.assertLive();
+    let verificationEscalation: { id: string };
+    try {
+      verificationEscalation = await this.deps.client.asAgent<{ id: string }>(job, 'createEscalation', '/v1/escalations', {
+        agentId: agent.id,
+        taskId: null,
+        severity: manifest.escalation.defaultSeverity ?? 'medium',
+        category: trigger,
+        situation,
+        attemptedActions: ['Provisioning verification read the approved briefs'],
+        reason: recommendation,
+        recommendation,
+        requestedFrom: manifest.escalation.managerId,
+      });
+    } catch (error) {
+      if (error instanceof LeaseLostError) throw error;
+      throw new WorkerError('ESCALATION_UNVERIFIED', `The control plane did not persist a verification escalation: ${(error as Error).message}`, false);
+    }
+    const escalationEvent = await this.observe(job, guard, 'verification.escalation', 'Persisted a policy-approved escalation through the control-plane path', { escalationId: verificationEscalation.id, trigger, managerId: manifest.escalation.managerId });
+    events.push(escalationEvent);
+    pass('escalation', makeEvidence({ eventIds: [escalationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Persisted control-plane escalation ${verificationEscalation.id} for trigger "${trigger}".` }));
 
     // observability: this attempt's model, tool and verification observations are persisted.
     const observabilityEvent = await this.observe(job, guard, 'verification.observability', 'Confirmed this attempt emitted durable, scoped observations', {
-      observed: [...new Set([runtimeEvent, modelEvent, toolsEvent, authEvent, permissionEvent, memoryEvent, endToEndEvent, ...loop.eventIds])],
+      observed: [...new Set([runtimeEvent, modelEvent, toolsEvent, authEvent, permissionEvent, memoryEvent, endToEndEvent, communicationEvent, escalationEvent, ...loop.eventIds])],
     });
     events.push(observabilityEvent);
     pass('observability', makeEvidence({ eventIds: [observabilityEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Model, tool and verification observations were persisted for this attempt.' }));
 
-    // evaluation: a deterministic verdict over the real artifacts, persisted before activation.
+    // evaluation: a real model judgement that must apply every manifest criterion
+    // and cite persisted evidence from this attempt.
+    guard.assertLive();
+    const knownEvidence = [...new Set([...artifacts, ...events])];
+    const evaluationTurn = await this.deps.model.turn({
+      system: [
+        'You evaluate a provisioning run against the supplied criteria.',
+        'Judge every criterion strictly from the supplied evidence only.',
+        'Respond with a single JSON object: {"passed":true,"criteria":[{"criterion":"...","passed":true,"evidenceIds":["..."]}]}.',
+        'Only cite evidence ids that were supplied to you.',
+      ].join(' '),
+      messages: [{ role: 'user', content: JSON.stringify({
+        criteria: manifest.evaluation.criteria,
+        deliverable: deliverableArtifact.path,
+        deliverableSha256: deliverableArtifact.sha256,
+        briefsRead: loop.readCount,
+        evidenceIds: knownEvidence,
+      }) }],
+      signal: guard.signal,
+    });
+    ledger.record(evaluationTurn.usage);
+    const judgement = extractJson<{ passed?: unknown; criteria?: unknown }>(evaluationTurn.content);
+    const criteriaResults = Array.isArray(judgement.criteria) ? (judgement.criteria as Record<string, unknown>[]) : [];
+    const cited = criteriaResults.flatMap(result => (Array.isArray(result.evidenceIds) ? (result.evidenceIds as string[]) : []));
+    const criteriaPassed = criteriaResults.length === (manifest.evaluation.criteria as string[]).length
+      && criteriaResults.every(result => result.passed === true && Array.isArray(result.evidenceIds) && (result.evidenceIds as unknown[]).length > 0);
+    if (judgement.passed !== true || !criteriaPassed || !cited.every(id => knownEvidence.includes(id))) {
+      throw new WorkerError('EVALUATION_FAILED', 'The recorded provisioning run did not satisfy the manifest evaluation criteria', false);
+    }
     const verdict = {
       criteria: manifest.evaluation.criteria,
+      judgement: criteriaResults,
       deliverable: deliverableArtifact.path,
       deliverableSha256: deliverableArtifact.sha256,
       briefsRead: loop.readCount,
-      managerReply: true,
-      escalationTrigger: trigger,
-      passed: true,
+      messageId: verificationMessage.id,
+      escalationId: verificationEscalation.id,
+      passed: true as const,
     };
     const evaluationArtifact = await this.publish(job, guard, 'evaluation.json', JSON.stringify(verdict, null, 2), 'application/json');
-    const evaluationEvent = await this.observe(job, guard, 'verification.evaluation', 'Evaluated the recorded provisioning run against the manifest criteria', verdict);
+    const evaluationEvent = await this.observe(job, guard, 'verification.evaluation', 'Applied every manifest criterion to persisted evidence', { criteria: manifest.evaluation.criteria, passed: true, deliverable: deliverableArtifact.path });
     artifacts.push(evaluationArtifact.id); events.push(evaluationEvent);
-    pass('evaluation', makeEvidence({ artifactIds: [evaluationArtifact.id], eventIds: [evaluationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'The recorded model run satisfied the manifest evaluation criteria and was persisted.' }));
+    pass('evaluation', makeEvidence({ artifactIds: [evaluationArtifact.id], eventIds: [evaluationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Every manifest evaluation criterion was applied to persisted evidence and passed.' }));
 
     // restart: a separate process reads the published bytes and reproduces the hash.
     const childHash = await this.childProcessHash(deliverableArtifact.absolutePath);
@@ -718,10 +782,12 @@ export class JobRunner {
     if (!manifest) throw new WorkerError('MANIFEST_MISSING', 'The agent has no approved manifest to execute with', false);
     const offered = this.offeredTools(manifest, true);
     await ledger.reserve(1 + this.deps.config.maxToolRounds);
+    // Retrieve scoped memory so an earlier evidence-backed lesson can shape this task.
+    const memory = await this.deps.client.listMemory(job, 50).catch(() => []);
     const loop = await this.agentToolLoop({
       job, ledger, guard, agent, manifest, offered,
       system: this.taskSystemPrompt(manifest),
-      prompt: this.taskPrompt(agent, task, inputMessage),
+      prompt: this.taskPrompt(agent, task, inputMessage, memory),
       maxRounds: this.deps.config.maxToolRounds,
     });
 
@@ -805,12 +871,18 @@ export class JobRunner {
       `Tools: ${(manifest.tools as string[]).join(', ') || 'none'}.`,
       'Produce only grounded work: read the approved briefs before asserting facts and never invent evidence.',
       'You MUST persist the deliverable with write_file before finishing.',
+      'Use the retrieved scoped memory when it is relevant, and say so in the summary.',
       'When finished respond with a single JSON object and no prose:',
       '{"summary":"what you actually did","reply":"a reply to the requester","deliverable":"the exact relative path you wrote with write_file"}.',
     ].join(' ');
   }
 
-  private taskPrompt(agent: Record<string, any>, task: Record<string, any>, inputMessage: Record<string, any> | null): string {
+  private taskPrompt(
+    agent: Record<string, any>,
+    task: Record<string, any>,
+    inputMessage: Record<string, any> | null,
+    memory: Record<string, any>[] = [],
+  ): string {
     return JSON.stringify({
       agentId: agent.id,
       objective: task.objective,
@@ -818,6 +890,11 @@ export class JobRunner {
       deliverable: task.deliverable,
       deadline: task.deadline,
       incomingMessage: inputMessage ? { from: inputMessage.sender?.id, content: inputMessage.content } : null,
+      retrievedMemory: memory.slice(0, 20).map(entry => ({
+        title: entry.title,
+        category: entry.category,
+        content: String(entry.content ?? '').slice(0, 800),
+      })),
     });
   }
 
@@ -841,6 +918,7 @@ export class JobRunner {
 
     guard.assertLive();
     const turn = await this.deps.model.turn({
+      signal: guard.signal,
       system: [
         "You capture one grounded, evidence-backed lesson from an agent's prior persisted execution.",
         'Respond with a single JSON object: {"observation": "...", "hypothesis": "...", "conclusion": "...", "title": "...", "content": "..."}.',
@@ -898,22 +976,57 @@ export class JobRunner {
     const payload = job.payload as any;
     const agent = payload.agent as Record<string, any>;
     const reason = String(payload.reason ?? 'Approved retirement');
-    const preserved = await this.deps.workspace.list('workspace', agent.id).catch(() => []);
-    // Read back the preserved knowledge so knowledgePreserved is observed, not asserted.
-    let knowledgeReadable = true;
-    for (const file of preserved.slice(0, 20)) {
-      try {
-        await this.deps.workspace.read('workspace', agent.id, file.path);
-      } catch {
-        knowledgeReadable = false;
-      }
+    const manifest = (agent.manifest ?? null) as Record<string, any> | null;
+
+    // credentialsRevoked: verified from the approved manifest, not asserted.
+    const credentialRefs = ((manifest?.permissions ?? []) as Grant[]).filter(grant => grant.credentialRef !== null);
+    if (credentialRefs.length) {
+      throw new WorkerError('CREDENTIALS_UNREVOKED', 'External credentials must be revoked before an agent can be retired', false);
     }
-    if (!knowledgeReadable) throw new WorkerError('KNOWLEDGE_UNREADABLE', 'Preserved knowledge could not be read back before retirement', false);
-    const record = await this.publish(job, guard, 'retirement.json', JSON.stringify({ agentId: agent.id, reason, retiredAt: nowIso(), preservedKnowledge: preserved, readBackVerified: knowledgeReadable }, null, 2), 'application/json');
-    const event = await this.observe(job, guard, 'retirement.cleanup', 'Disabled the local runtime and re-read preserved knowledge', {
-      reason, credentials: 0, preservedFiles: preserved.length, runtime: this.deps.config.modelName,
+
+    // knowledgePreserved: gather durable knowledge and read every item back.
+    const workspaceFiles = await this.deps.workspace.list('workspace', agent.id).catch(() => []);
+    const outputFiles = await this.deps.workspace.list('output', agent.id).catch(() => []);
+    const knowledge: { root: 'workspace' | 'output'; path: string }[] = [
+      ...workspaceFiles.map(file => ({ root: 'workspace' as const, path: file.path })),
+      ...outputFiles.map(file => ({ root: 'output' as const, path: file.path })),
+    ];
+    if (!knowledge.length) {
+      throw new WorkerError('KNOWLEDGE_MISSING', 'No durable knowledge was found to preserve, so retirement cannot be verified', false);
+    }
+    let preservedBytes = 0;
+    for (const file of knowledge.slice(0, 100)) {
+      const content = await this.deps.workspace.read(file.root, agent.id, file.path).catch(() => null);
+      if (content === null) throw new WorkerError('KNOWLEDGE_UNREADABLE', `Preserved knowledge ${file.path} could not be read back`, false);
+      preservedBytes += Buffer.byteLength(content);
+    }
+
+    // runtimeDisabled: write and read back a retirement marker in the agent workspace.
+    const marker = JSON.stringify({ agentId: agent.id, disabledAt: nowIso(), reason }, null, 2);
+    await this.deps.workspace.writeWorkspaceFile(agent.id, 'runtime-disabled.json', marker);
+    const markerBack = await this.deps.workspace.read('workspace', agent.id, 'runtime-disabled.json');
+    if (markerBack !== marker) throw new WorkerError('RUNTIME_DISABLE_FAILED', 'The runtime retirement marker did not verify on read-back', false);
+
+    // Consultant knowledge transfer: copy a verified index into each recipient workspace.
+    const recipients = (((manifest?.consultant?.knowledgeRecipientIds ?? []) as string[])).filter(id => id && id !== agent.id);
+    const index = JSON.stringify({ from: agent.id, reason, files: knowledge.map(file => file.path), retiredAt: nowIso() }, null, 2);
+    const transferred: string[] = [];
+    for (const recipient of recipients) {
+      const target = `consultant-transfer/${agent.id}/index.json`;
+      await this.deps.workspace.writeWorkspaceFile(recipient, target, index);
+      const back = await this.deps.workspace.read('workspace', recipient, target);
+      if (back !== index) throw new WorkerError('TRANSFER_FAILED', `Knowledge transfer to ${recipient} did not verify on read-back`, false);
+      transferred.push(recipient);
+    }
+
+    const record = await this.publish(job, guard, 'retirement.json', JSON.stringify({
+      agentId: agent.id, reason, retiredAt: nowIso(), credentialsRevoked: true, runtimeDisabled: true,
+      preservedKnowledge: knowledge, preservedBytes, transferredTo: transferred,
+    }, null, 2), 'application/json');
+    const event = await this.observe(job, guard, 'retirement.cleanup', 'Disabled the runtime, verified preserved knowledge and transferred consultant knowledge', {
+      reason, credentials: 0, preservedFiles: knowledge.length, preservedBytes, transferredTo: transferred, runtime: this.deps.config.modelName,
     });
-    const evidence = makeEvidence({ artifactIds: [record.id], eventIds: [event], taskId: job.taskId, jobId: job.jobId, summary: `Retired ${agent.id}: ${reason}` });
+    const evidence = makeEvidence({ artifactIds: [record.id], eventIds: [event], taskId: job.taskId, jobId: job.jobId, summary: `Retired ${agent.id}: verified ${knowledge.length} knowledge file(s) and disabled the runtime.` });
     await ledger.settle();
     guard.assertLive();
     await this.deps.client.complete(job, {
@@ -922,8 +1035,8 @@ export class JobRunner {
       // This deployment holds no external credentials, so there are none to revoke.
       credentialsRevoked: true,
       runtimeDisabled: true,
-      knowledgePreserved: knowledgeReadable,
-      // The control plane refuses to enqueue retirement while active tasks remain.
+      knowledgePreserved: true,
+      // The control plane cancels work and refuses to enqueue retirement while active tasks remain.
       activeTasksResolved: true,
     });
   }

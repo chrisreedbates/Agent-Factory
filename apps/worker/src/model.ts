@@ -1,4 +1,4 @@
-import { WorkerError, isRecord } from './errors.js';
+import { LeaseLostError, WorkerError, isRecord } from './errors.js';
 
 export interface ModelUsage {
   modelCalls: number;
@@ -43,7 +43,8 @@ export interface ModelTurn {
 
 export interface ModelAdapter {
   readonly name: string;
-  turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[] }): Promise<ModelTurn>;
+  /** `signal` must abort the provider request when the job lease is lost. */
+  turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[]; signal?: AbortSignal }): Promise<ModelTurn>;
 }
 
 /** Tolerant JSON extraction for model replies that wrap JSON in prose or fences. */
@@ -87,7 +88,7 @@ export class OpenAiAdapter implements ModelAdapter {
     return this.client;
   }
 
-  async turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[] }): Promise<ModelTurn> {
+  async turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[]; signal?: AbortSignal }): Promise<ModelTurn> {
     const client = await this.sdk();
     const messages: any[] = [{ role: 'system', content: input.system }];
     for (const message of input.messages) {
@@ -113,8 +114,10 @@ export class OpenAiAdapter implements ModelAdapter {
         ...(input.tools?.length
           ? { tools: input.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })), tool_choice: 'auto' }
           : {}),
-      });
+      }, input.signal ? { signal: input.signal } : undefined);
     } catch (error) {
+      // The request itself is cancelled, so no further tokens are billed.
+      if (input.signal?.aborted) throw new LeaseLostError(409, 'The model request was cancelled because the job lease was lost');
       const status = (error as any)?.status;
       throw new WorkerError('MODEL_CALL_FAILED', `Model call failed: ${(error as Error).message}`, status === 429 || status >= 500);
     }
@@ -161,11 +164,13 @@ export async function runToolLoop(input: {
   maxRounds: number;
   handleTool: (call: ToolCall) => Promise<string>;
   onTurn?: (turn: ModelTurn) => Promise<void>;
+  signal?: AbortSignal;
 }): Promise<ToolLoopResult> {
   const messages: ModelMessage[] = [{ role: 'user', content: input.prompt }];
   let usage = EMPTY_USAGE;
   for (let round = 0; round < input.maxRounds; round++) {
-    const turn = await input.model.turn({ system: input.system, messages, tools: input.tools });
+    input.signal?.throwIfAborted();
+    const turn = await input.model.turn({ system: input.system, messages, tools: input.tools, signal: input.signal });
     usage = addUsage(usage, turn.usage);
     await input.onTurn?.(turn);
     if (!turn.toolCalls.length) {
