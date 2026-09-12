@@ -35,7 +35,7 @@ const DEFAULT_LEASE_SECONDS = 120;
 const DEFAULT_POLL_MS = 2000;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_ESTIMATED_COST = 0.05;
-const DEFAULT_MAX_TOOL_ROUNDS = 4;
+const DEFAULT_MAX_TOOL_ROUNDS = 8;
 
 const integer = (env: NodeJS.ProcessEnv, name: string, fallback: number, min: number, max: number): number => {
   const raw = env[name];

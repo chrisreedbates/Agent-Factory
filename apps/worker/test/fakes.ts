@@ -228,8 +228,9 @@ export class FakeControlPlane implements ControlPlane {
     this.ops.push(operationId);
     if (operationId === 'createMemory') {
       const id = this.nextId('memory');
-      this.memories.push({ id, agentId: job.agentId, attempt: job.attempt, ...body });
-      return { id } as T;
+      const status = body.category === 'canonical' ? 'PROPOSED' : 'ACTIVE';
+      this.memories.push({ id, agentId: job.agentId, attempt: job.attempt, ...body, status });
+      return { id, status } as T;
     }
     if (operationId === 'createHiringRequest') {
       const id = this.nextId('hire');

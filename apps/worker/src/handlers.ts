@@ -17,6 +17,7 @@ const execFileAsync = promisify(execFile);
 export const SUPPORTED_TOOLS: Readonly<Record<string, readonly string[]>> = {
   'workspace-files': ['read', 'write', 'list'],
   request_hire: ['request'],
+  send_message: ['send'],
 };
 
 const PRIVATE_SCOPE: Scope = { visibility: 'private', teamId: null, agentIds: [] };
@@ -134,6 +135,7 @@ interface ProvisionDraft extends TaskDraft {
 }
 
 interface LearningDraft {
+  canonicalRevision?: unknown;
   observation?: unknown;
   hypothesis?: unknown;
   conclusion?: unknown;
@@ -355,6 +357,15 @@ export class JobRunner {
         },
       });
     }
+    if (includeRecruitment && grantOf('send_message')?.operations.includes('send')) {
+      offered.set('send_message', {
+        tool: 'send_message', operation: 'send',
+        definition: {
+          name: 'send_message', description: 'Send a durable message to an authorized agent. Set actionable true to delegate work and receive its reply. Use an actual known agent ID.',
+          parameters: { type: 'object', properties: { recipientId: { type: 'string' }, content: { type: 'string' }, actionable: { type: 'boolean' } }, required: ['recipientId', 'content', 'actionable'] },
+        },
+      });
+    }
     return offered;
   }
 
@@ -371,6 +382,10 @@ export class JobRunner {
     if (name === 'write_file') {
       if (!text(args.path)) return 'path must be a non-empty string';
       return typeof args.content === 'string' && args.content.trim().length > 0 ? null : 'content must be non-empty';
+    }
+    if (name === 'send_message') {
+      if (!text(args.recipientId) || !text(args.content)) return 'recipientId and content must be non-empty strings';
+      return typeof args.actionable === 'boolean' ? null : 'actionable must be a boolean';
     }
     if (name === 'request_hire') {
       for (const key of ['role', 'mission', 'justification', 'expectedBenefit']) if (!text(args[key])) return `${key} must be a non-empty string`;
@@ -461,6 +476,15 @@ export class JobRunner {
           const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { path: stored.path, sha256: stored.sha256 });
           if (event) eventIds.push(event);
           return `wrote ${stored.path} (${stored.sha256})`;
+        }
+        if (call.name === 'send_message') {
+          const message = await this.deps.client.asAgent<{ id: string }>(job, 'createMessage', '/v1/messages', {
+            recipientId: call.arguments.recipientId, recipientKind: 'agent', content: call.arguments.content,
+            actionable: call.arguments.actionable, inReplyTo: null, taskId: job.taskId,
+          });
+          const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { messageId: message.id });
+          if (event) eventIds.push(event);
+          return `message ${message.id} persisted`;
         }
         if (call.name === 'request_hire') {
           const proposal = this.buildHireProposal(call.arguments, agent, manifest);
@@ -617,7 +641,7 @@ export class JobRunner {
     const payload = job.payload as any;
     const agent = payload.agent as Record<string, any>;
     const manifest = payload.manifest as Record<string, any>;
-    const maxRounds = Math.min(3, this.deps.config.maxToolRounds);
+    const maxRounds = this.deps.config.maxToolRounds;
     // A strict self-check, the bounded end-to-end tool loop and the evaluation judgement.
     await ledger.reserve(2 + maxRounds);
 
@@ -942,6 +966,7 @@ export class JobRunner {
     // complete without the required learned context. The API's empty list is the
     // only representation of "no records".
     const memory = await this.deps.client.listMemory(job, 50);
+    await this.observe(job, guard, 'memory.retrieved', 'Retrieved scoped memory for this task', { memoryIds: memory.map(entry => entry.id) });
     const loop = await this.agentToolLoop({
       job, ledger, guard, agent, manifest, offered,
       system: this.taskSystemPrompt(manifest),
@@ -1026,6 +1051,12 @@ export class JobRunner {
     });
     await ledger.settle();
     guard.assertLive();
+    await this.deps.client.asAgent(job, 'createMemory', '/v1/memory', {
+      ownerAgentId: agent.id, category: 'episodic', title: `Task observation: ${String(task.objective).slice(0, 120)}`,
+      content: JSON.stringify({ objective: task.objective, summary, deliverable: deliverable[1].path, evidence: deliverableExcerpt }),
+      scope: PRIVATE_SCOPE, provenance: evidence, expiresAt: null, supersedesId: null,
+    });
+    guard.assertLive();
     await this.deps.client.complete(job, { kind: 'run_task', evidence, summary, reply });
   }
 
@@ -1040,6 +1071,10 @@ export class JobRunner {
       { tool: 'workspace-files', operations: ['read', 'write', 'list'], resource: null, credentialRef: null },
       ...(parentCanRecruit ? [{ tool: 'request_hire', operations: ['request'], resource: null, credentialRef: null }] : []),
     ];
+    if ((manifest.permissions as Grant[]).some(grant => grant.tool === 'send_message' && grant.operations.includes('send'))) {
+      tools.push('send_message');
+      grants.push({ tool: 'send_message', operations: ['send'], resource: null, credentialRef: null });
+    }
     return {
       justification: String(args.justification),
       role: String(args.role),
@@ -1052,7 +1087,7 @@ export class JobRunner {
       tools,
       grants,
       expectedBenefit: String(args.expectedBenefit),
-      budget: { modelCallsDaily: 10, externalSpendDaily: 0, currency: this.deps.config.currency, maxConcurrentTasks: 1 },
+      budget: { modelCallsDaily: Math.min(100, manifest.budget.modelCallsDaily), externalSpendDaily: Math.min(5, manifest.budget.externalSpendDaily), currency: this.deps.config.currency, maxConcurrentTasks: 1 },
       ...(agentType === 'consultant'
         ? { consultant: { deliverable: String(args.mission), deadline: null, terminationCondition: 'Deliverable accepted by the requesting agent.', knowledgeRecipientIds: [agent.id] } }
         : {}),
@@ -1105,7 +1140,7 @@ export class JobRunner {
 
     // Learning must be grounded in prior persisted execution evidence, never in
     // the lesson's own artifact (which would be circular provenance).
-    const memory = await this.deps.client.listMemory(job, 50).catch(() => []);
+    const memory = await this.deps.client.listMemory(job, 50);
     const grounded = (Array.isArray(memory) ? memory : []).filter(entry =>
       entry?.provenance && ((entry.provenance.artifactIds?.length ?? 0) > 0 || (entry.provenance.eventIds?.length ?? 0) > 0));
     if (!grounded.length) {
@@ -1119,7 +1154,7 @@ export class JobRunner {
       system: [
         "You capture one grounded, evidence-backed lesson from an agent's prior persisted execution.",
         'Respond with a single JSON object: {"observation": "...", "hypothesis": "...", "conclusion": "...", "title": "...", "content": "..."}.',
-        'Only record observations supported by the supplied material. Never invent results.',
+        'Only record observations supported by the supplied material. Never invent results. If the evidence warrants a stable operating policy, optionally include canonicalRevision: {title, content}. This is only a proposal for human approval, never permission to change active policy.',
       ].join(' '),
       messages: [{ role: 'user', content: JSON.stringify({
         agentId: agent.id,
@@ -1159,11 +1194,36 @@ export class JobRunner {
       expiresAt: null,
       supersedesId: null,
     });
+    let canonicalRevisionId: string | null = null;
+    if (draft.canonicalRevision !== undefined && draft.canonicalRevision !== null) {
+      const revision = draft.canonicalRevision as Record<string, unknown>;
+      if (typeof revision.title !== 'string' || !revision.title.trim() || typeof revision.content !== 'string' || !revision.content.trim()) {
+        throw new WorkerError('MODEL_OUTPUT', 'Canonical learning requires a nonempty title and content', false);
+      }
+      guard.assertLive();
+      // The memory endpoint creates PROPOSED canonical knowledge and its bound
+      // governance request atomically. Only a human can approve it; the worker
+      // never submits an approval or overwrites the active source knowledge.
+      const proposal = await this.deps.client.asAgent<{ id: string; status: string }>(job, 'createMemory', '/v1/memory', {
+        ownerAgentId: agent.id,
+        category: 'canonical',
+        title: revision.title.trim(),
+        content: revision.content.trim(),
+        scope: PRIVATE_SCOPE,
+        provenance: outcomeEvidence,
+        expiresAt: null,
+        supersedesId: null,
+      });
+      if (proposal.status !== 'PROPOSED') {
+        throw new WorkerError('APPROVAL_REQUIRED', 'Canonical learning must remain proposed until human approval', false);
+      }
+      canonicalRevisionId = proposal.id;
+    }
     await ledger.settle();
     guard.assertLive();
     await this.deps.client.complete(job, {
       kind: 'learn',
-      learning: { observation, hypothesis, conclusion, evidence: outcomeEvidence, memoryIds: [memoryEntry.id], canonicalRevisionId: null },
+      learning: { observation, hypothesis, conclusion, evidence: outcomeEvidence, memoryIds: [memoryEntry.id], canonicalRevisionId },
     });
   }
 

@@ -207,6 +207,22 @@ function provisioningModel() {
   });
 }
 
+test('provisioning allows sequential discovery, read, write and final response within its configured bound', async () => {
+  const base = provisioningModel();
+  const model: ModelAdapter = { name: base.name, turn: async input => {
+    if (!input.system.includes('self-check') && !input.system.includes('evaluate a provisioning run') && !input.messages.some(message => message.role === 'tool')) {
+      return { content: null, usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null }, toolCalls: [{ id: 'discover', name: 'list_files', arguments: { root: 'briefs' } }] };
+    }
+    return base.turn({ ...input, messages: input.messages.filter(message => message.role !== 'tool' || message.toolCallId !== 'discover') });
+  } };
+  const rig = await makeRig(model);
+  try {
+    await runJob(rig, makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(rig.client.completed.at(-1)!.outcome.kind, 'provision_agent');
+    assert.ok(rig.client.events.some(event => event.data?.operation === 'list'));
+  } finally { await rig.cleanup(); }
+});
+
 test('provisioning activates through the dedicated fenced communication capability, never delegated sends', async () => {
   const rig = await makeRig(provisioningModel());
   try {
@@ -354,6 +370,35 @@ test('renewal loss aborts the active attempt without further spend or a reported
   }
 });
 
+test('run_task delegates a durable actionable message only with a current send grant', async () => {
+  for (const revoked of [false, true]) {
+    const base = agentLoopModel({ summary: 'Delegated review.', reply: 'Review requested.', deliverable: 'report.md' }, 'report.md');
+    const model: ModelAdapter = { name: base.name, turn: async input => {
+      if (!input.system.includes('evaluation gate') && !input.messages.some(message => message.role === 'tool')) {
+        return { content: null, usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null }, toolCalls: [{ id: 'send', name: 'send_message', arguments: { recipientId: 'agent-report', content: 'Review the brief and reply with evidence.', actionable: true } }] };
+      }
+      return base.turn({ ...input, messages: input.messages.filter(message => message.role !== 'tool' || message.toolCallId !== 'send') });
+    } };
+    const rig = await makeRig(model);
+    try {
+      const grant = { tool: 'send_message', operations: ['send'], resource: null, credentialRef: null };
+      const manifest = makeManifest();
+      manifest.tools.push('send_message'); manifest.permissions.push(grant);
+      if (!revoked) rig.client.grants.push(grant);
+      const job = makeJob('run_task', { agent: makeAgent({ manifest }), task: { objective: 'Delegate the source review.', constraints: [], deliverable: 'report.md' } });
+      if (revoked) {
+        await assert.rejects(runJob(rig, job), (error: any) => error.code === 'GRANT_REVOKED');
+        assert.equal(rig.client.messages.length, 0);
+      } else {
+        await runJob(rig, job);
+        assert.equal(rig.client.messages[0].recipientId, 'agent-report');
+        assert.equal(rig.client.messages[0].actionable, true);
+        assert.equal(rig.client.messages[0].taskId, job.taskId);
+      }
+    } finally { await rig.cleanup(); }
+  }
+});
+
 test('learn grounds the lesson in prior persisted evidence and never self-references', async () => {
   const model = new FakeModel([{
     content: JSON.stringify({
@@ -374,6 +419,40 @@ test('learn grounds the lesson in prior persisted evidence and never self-refere
   } finally {
     await rig.cleanup();
   }
+});
+
+test('learn proposes canonical policy for human approval while retaining the evidence-backed lesson', async () => {
+  const rig = await makeRig(new FakeModel([{ content: JSON.stringify({
+    observation: 'The prior task lacked an attachment.', hypothesis: 'Check sources first.',
+    conclusion: 'Validate attachments before drafting.', title: 'Validate inputs',
+    canonicalRevision: { title: 'Source policy', content: 'Check source availability before drafting.' },
+  }) }]));
+  try {
+    rig.client.memoryEntries = [{ id: 'prior', title: 'Observation', content: 'Missing attachment', provenance: { artifactIds: ['artifact-prior'], eventIds: [], taskId: null, jobId: null, summary: 'prior' } }];
+    await runJob(rig, makeJob('learn', { agent: makeAgent() }));
+    const [observation, proposal] = rig.client.memories;
+    assert.equal(observation.category, 'episodic');
+    assert.equal(observation.status, 'ACTIVE');
+    assert.equal(proposal.category, 'canonical');
+    assert.equal(proposal.status, 'PROPOSED');
+    assert.equal(proposal.supersedesId, null, 'existing canonical knowledge is never overwritten');
+    assert.equal(proposal.ownerAgentId, 'agent-1');
+    const outcome = rig.client.completed.at(-1)!.outcome as any;
+    assert.deepEqual(outcome.learning.memoryIds, [observation.id]);
+    assert.equal(outcome.learning.canonicalRevisionId, proposal.id);
+    assert.deepEqual(proposal.provenance.artifactIds, outcome.learning.evidence.artifactIds);
+  } finally { await rig.cleanup(); }
+});
+
+test('learn propagates memory authority failures before invoking the model', async () => {
+  const model = new FakeModel([]);
+  const rig = await makeRig(model);
+  try {
+    rig.client.listMemory = async () => { throw new WorkerError('MEMORY_FORBIDDEN', 'Access revoked', false); };
+    await assert.rejects(runJob(rig, makeJob('learn', { agent: makeAgent() })), (error: any) => error.code === 'MEMORY_FORBIDDEN');
+    assert.equal(model.calls.length, 0);
+    assert.equal(rig.client.memories.length, 0);
+  } finally { await rig.cleanup(); }
 });
 
 test('learn fails rather than manufacturing a lesson when no prior evidence exists', async () => {

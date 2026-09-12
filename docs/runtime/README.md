@@ -33,7 +33,7 @@ Copy `apps/worker/.env.example` and set values; the worker shares `.env` with th
 | `WORKER_POLL_MS` | Idle poll interval. |
 | `WORKER_JOB_KINDS` | Optional subset of job kinds to claim. |
 | `WORKER_ESTIMATED_COST_PER_CALL` | Reservation amount per model call; settlement records the real cost or `null`. |
-| `WORKER_MAX_TOOL_ROUNDS` | Upper bound on model/tool round trips per task. |
+| `WORKER_MAX_TOOL_ROUNDS` | Upper bound on model/tool round trips per task and provisioning attempt (default 8, maximum 12), allowing discovery, reads, governed delegation and writes before the final response. |
 
 ## Job protocol
 
@@ -43,8 +43,8 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 | --- | --- |
 | `compile_manifest` | The real model drafts the narrative role; structural fields (team, manager, tools, grants, budget) come from the governance proposal. The assembled manifest is validated against the shared `AgentManifest` schema. |
 | `provision_agent` / `reconfigure_agent` | Runs the real mandatory checks and returns `steps`, `checks` and `resources`. Communication and escalation are exercised through the dedicated fenced `POST /v1/worker/jobs/:id/verify-communication` capability (see below). If the control plane refuses any check, the worker publishes a blocked diagnostic and fails closed instead of activating the agent. |
-| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. The agent's scoped memory is retrieved and given to the model (a refused or failed retrieval fails the job rather than proceeding with empty context), and completion requires a grounded evaluation gate over the persisted deliverable. |
-| `learn` | The model proposes one grounded lesson from prior persisted evidence; the worker persists an artifact and the agent's own episodic memory whose provenance is the prior evidence, not itself. |
+| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` and durable actionable `send_message` when granted. Validated task observations are persisted as episodic memory for later learning. The agent's scoped memory is retrieved and given to the model (a refused or failed retrieval fails the job rather than proceeding with empty context), and completion requires a grounded evaluation gate over the persisted deliverable. |
+| `learn` | The model proposes one grounded lesson from prior persisted evidence; the worker persists an artifact and the agent's own episodic memory whose provenance is the prior evidence, not itself. An optional model-proposed canonical policy is submitted through the API as `PROPOSED` knowledge with a bound human governance request; the worker never approves it or overwrites active knowledge. |
 | `retire_agent` | Verifies the **whole** durable knowledge set by reading every item back (failing closed above the supported cap rather than dropping any), atomically replaces a runtime-disable marker, copies the authorized knowledge bytes (with provenance and scope) into each `knowledgeRecipientIds` workspace and verifies retrieval as that recipient, then publishes a retirement record. Every reported count and boolean is derived from the verified set. |
 
 **Budget.** Every non-retirement job reserves before model or tool execution and settles afterwards. Model/tool observations require an outstanding reservation, and completion requires settled usage with no outstanding reservation for the attempt.
@@ -101,3 +101,7 @@ Tests use an in-memory control plane that mirrors the API's fencing, reservation
 Real Fastify/PostgreSQL coverage for the `verify-communication` authority lives in Machine 1's lane (PR #4), which owns `apps/api/**`; the runtime lane keeps the fail-closed side and its orchestration tests.
 
 These tests are orchestration evidence and do **not** prove that a real model or employee works; the real model and tool workflow must still be exercised against a running control plane.
+
+The `send_message` capability requires an approved `send_message` grant with operation `send`. Its actionable messages use the control plane to admit a recipient task and route the resulting reply; the API enforces communication scope. Recruited agents only inherit messaging authority when their requester already has it. Proposed budgets inherit the requester limits capped at 100 model calls and 5 currency units per day; the human still reviews the exact manifest.
+
+`tests/integration/runtime-api.test.ts` exercises the actual worker against the actual API and PGlite using a deterministic model adapter. It covers compilation, human approval, provisioning, operator retrieval/resolution of verification messages, real task artifacts, scheduled learning, and a canonical proposal that stays pending until human approval. This test does not claim live provider verification.
