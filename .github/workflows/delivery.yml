@@ -50,7 +50,8 @@ jobs:
         run: node scripts/ci/inspect.mjs --require-system
       - name: Explain blocked automatic delivery
         if: steps.scope.outputs.full_system != 'true'
-        run: echo 'Container delivery is blocked: runtime, console, acceptance harness or container definitions are incomplete. No images were published.' >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo 'Container delivery is blocked: runtime, console, acceptance harness or container definitions are incomplete. No images were published.' >> "$GITHUB_STEP_SUMMARY"
   publish:
     name: Publish immutable commit images
     needs: assess
