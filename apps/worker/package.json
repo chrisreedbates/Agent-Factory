@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test src/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "dev": "node --import tsx src/index.ts",
+    "once": "node --import tsx src/index.ts --once"
   },
   "dependencies": {
     "@agent-factory/contracts": "workspace:*",

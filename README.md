@@ -31,8 +31,8 @@ Core checks are independent. The combined check fails explicitly until sibling r
 `apps/worker` is the Machine 2 runtime. It polls the control plane at `POST /v1/worker/jobs/claim` and executes the six fenced job kinds (`compile_manifest`, `provision_agent`, `reconfigure_agent`, `run_task`, `learn`, `retire_agent`). It never opens PostgreSQL; every mutation goes through `/v1` with the worker credential and the current lease. Mutating calls use a deterministic `Idempotency-Key`, budget is reserved before model calls and settled afterwards, and artifacts are written to the shared workspace volume and published by hash. See [docs/runtime/README.md](docs/runtime/README.md) for configuration and the job protocol, and [docs/runtime/self-audit.md](docs/runtime/self-audit.md) for the Machine 2 verification boundary.
 
 ```sh
-pnpm dev:worker      # poll and execute jobs in a loop
-pnpm worker:once     # run a single bounded pass (useful for smoke checks)
+pnpm --filter @agent-factory/worker dev    # poll and execute jobs in a loop
+pnpm --filter @agent-factory/worker once   # run a single bounded pass (useful for smoke checks)
 ```
 
 ## Contracts and handoff

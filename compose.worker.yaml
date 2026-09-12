@@ -1,0 +1,21 @@
+# Machine 2 worker override. Usage:
+#   docker compose -f compose.yaml -f compose.worker.yaml up -d --build
+#
+# The worker must mount the same named volume the API mounts read-only, but
+# read/write, and read the approved source briefs from a separate read-only bind.
+services:
+  worker:
+    build: .
+    command: ["sh", "-c", "pnpm --filter @agent-factory/worker dev"]
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:3000
+      ARTIFACT_ROOT: /workspaces
+      SOURCE_ROOT: /sources
+    volumes:
+      - "workspaces:/workspaces:rw"
+      - "./sources:/sources:ro"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
