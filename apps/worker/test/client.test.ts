@@ -70,3 +70,53 @@ test('client sends fencing headers, idempotency keys and maps lease errors', asy
     await once(server, 'close').catch(() => {});
   }
 });
+
+test('verifyProvisionCommunication sends only the fenced lease body and surfaces refusals', async () => {
+  const seen: SeenRequest[] = [];
+  let refuse = false;
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString('utf8');
+    seen.push({ url: request.url ?? '', method: request.method ?? '', headers: request.headers, body: raw ? JSON.parse(raw) : null });
+    response.setHeader('content-type', 'application/json');
+    if (refuse) {
+      response.statusCode = 403;
+      response.end(JSON.stringify({ error: { code: 'DELEGATION_FORBIDDEN', message: 'refused', retryable: false, correlationId: 'c' } }));
+      return;
+    }
+    response.end(JSON.stringify({ data: { message: { id: 'message-1' }, escalation: { id: 'escalation-1' } } }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+  try {
+    const config = loadConfig({ WORKER_TOKEN: 't'.repeat(32), MODEL_NAME: 'test-model', API_BASE_URL: `http://127.0.0.1:${port}` } as NodeJS.ProcessEnv);
+    const client = new ControlPlaneClient(config);
+    const job = makeJob('provision_agent', {});
+
+    assert.deepEqual(await client.verifyProvisionCommunication(job), { message: { id: 'message-1' }, escalation: { id: 'escalation-1' } });
+
+    const request0 = seen[0]!;
+    assert.equal(request0.url, '/v1/worker/jobs/job-provision_agent/verify-communication');
+    assert.equal(request0.method, 'POST');
+    // Exactly the contract body: no actors, recipients or content.
+    assert.deepEqual(request0.body, { leaseToken: job.leaseToken, attempt: job.attempt });
+    assert.ok(request0.headers['idempotency-key'], 'the verification mutation must be idempotent');
+    assert.match(request0.headers.authorization, /^Bearer t+$/);
+    // No delegated agent headers on this narrowly scoped operation.
+    assert.equal(request0.headers['x-job-id'], undefined);
+    assert.equal(request0.headers['x-lease-token'], undefined);
+    assert.equal(request0.headers['x-job-attempt'], undefined);
+
+    // A refusal surfaces the exact code instead of a fabricated success.
+    refuse = true;
+    await assert.rejects(
+      () => client.verifyProvisionCommunication(job),
+      (error: any) => error.code === 'DELEGATION_FORBIDDEN' && error.name === 'WorkerError',
+    );
+  } finally {
+    server.close();
+    await once(server, 'close').catch(() => {});
+  }
+});

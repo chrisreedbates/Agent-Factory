@@ -84,6 +84,9 @@ export class FakeControlPlane implements ControlPlane {
   memoryEntries: Record<string, any>[] = [];
   rejectForgedCredential = true;
   renewError: Error | null = null;
+  /** Set to refuse the dedicated provisioning-verification capability (fail-closed coverage). */
+  provisionCommunicationError: Error | null = null;
+  readonly provisioningCommunications: { messageId: string; escalationId: string }[] = [];
   private sequence = 0;
 
   private nextId(prefix: string): string {
@@ -198,6 +201,26 @@ export class FakeControlPlane implements ControlPlane {
     return { jobId: job.jobId, status: input.retryable ? 'QUEUED' : 'FAILED', duplicate: false };
   }
 
+  /**
+   * Contract 1.1.0 fenced provisioning-verification capability. Mirrors the API:
+   * accepted only while a provisioning/reconfiguration lease is live, and it binds
+   * the agent, manifest, recipients and content server-side, so there is no body
+   * to supply beyond the lease. Ordinary pre-ACTIVE delegation stays forbidden.
+   */
+  async verifyProvisionCommunication(job: ClaimedJob): Promise<{ message: { id: string }; escalation: { id: string } }> {
+    this.ops.push('verifyProvisionCommunication');
+    if (this.provisionCommunicationError) throw this.provisionCommunicationError;
+    if (!['provision_agent', 'reconfigure_agent'].includes(job.kind)) {
+      throw new WorkerError('DELEGATION_FORBIDDEN', 'Communication verification requires a provisioning or reconfiguration job', false);
+    }
+    const messageId = this.nextId('message');
+    const escalationId = this.nextId('escalation');
+    this.messages.push({ id: messageId, agentId: job.agentId, attempt: job.attempt, serverBound: true, actionable: false });
+    this.escalations.push({ id: escalationId, agentId: job.agentId, attempt: job.attempt, source: 'provisioning_verification', severity: 'low' });
+    this.provisioningCommunications.push({ messageId, escalationId });
+    return { message: { id: messageId }, escalation: { id: escalationId } };
+  }
+
   async asAgent<T>(job: ClaimedJob, operationId: string, _path: string, body: Record<string, any>): Promise<T> {
     this.ops.push(operationId);
     if (operationId === 'createMemory') {
@@ -211,9 +234,10 @@ export class FakeControlPlane implements ControlPlane {
       return { id } as T;
     }
     if (operationId === 'createMessage' || operationId === 'createEscalation') {
-      // Faithful to apps/api/src/app.ts: delegation is admitted only for run_task
-      // and learn jobs, and the delegated actor must be ACTIVE. A provisioning
-      // job is therefore always refused, so tests cannot pass a forbidden path.
+      // Faithful to apps/api/src/app.ts: ordinary delegation is admitted only for
+      // run_task and learn jobs, and the delegated actor must be ACTIVE. A
+      // provisioning job is therefore always refused, so no test can pass a
+      // forbidden path; the dedicated 1.1.0 capability above is the only route.
       if (!['run_task', 'learn'].includes(job.kind)) {
         throw new WorkerError('DELEGATION_FORBIDDEN', 'Only agent task or learning execution may act as an agent', false);
       }

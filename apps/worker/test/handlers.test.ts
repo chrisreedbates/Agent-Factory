@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { AgentManifest, validateResponse } from '@agent-factory/contracts';
 import { loadConfig } from '../src/config.js';
 import { JobLedger, JobRunner } from '../src/handlers.js';
-import { LeaseLostError } from '../src/errors.js';
+import { LeaseLostError, WorkerError } from '../src/errors.js';
 import { REQUIRED_VERIFICATION_CHECKS } from '../src/evidence.js';
 import { WorkerRuntime } from '../src/runtime.js';
 import type { ModelAdapter } from '../src/model.js';
@@ -183,8 +183,9 @@ test('compilation fails on unsupported requested tools instead of silently dropp
   }
 });
 
-test('provisioning verifies the real runtime and fails closed on the core delegation boundary', async () => {
-  const model = new FakeModel(input => {
+/** Drives the provisioning run: nonce self-check, brief read, deliverable, then a reply and escalation. */
+function provisioningModel() {
+  return new FakeModel(input => {
     if (input.system.includes('self-check')) {
       const last = input.messages.at(-1);
       return { content: last && last.role === 'user' ? last.content : '' };
@@ -204,20 +205,57 @@ test('provisioning verifies the real runtime and fails closed on the core delega
       escalation: { trigger: 'missing evidence', situation: 'One brief was incomplete.', recommendation: 'Request the missing source.' },
     }) };
   });
-  const rig = await makeRig(model);
+}
+
+test('provisioning activates through the dedicated fenced communication capability, never delegated sends', async () => {
+  const rig = await makeRig(provisioningModel());
   try {
     const job = makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 });
     rig.client.queue.push(job);
     assert.equal(await rig.runtime.runOnce(), true);
 
-    // The worker exercises the real local runtime, but never claims activation.
-    assert.equal(rig.client.completed.length, 0, 'provisioning must not report success on a forbidden path');
+    // The dedicated 1.1.0 capability is the only route used; the forbidden
+    // pre-ACTIVE delegation path is never attempted.
+    assert.equal(rig.client.provisioningCommunications.length, 1, 'the fenced capability must be exercised exactly once');
+    assert.ok(!rig.client.ops.includes('createMessage'), 'provisioning must not attempt delegated messaging');
+    assert.ok(!rig.client.ops.includes('createEscalation'), 'provisioning must not attempt delegated escalation');
+    assert.ok(rig.client.ops.includes('probeUnauthorized'), 'authentication is still a real boundary probe');
+    const { messageId, escalationId } = rig.client.provisioningCommunications[0]!;
+
+    // Every mandatory check now reports PASSED with evidence, so activation can proceed.
+    assert.equal(rig.client.failed.length, 0);
+    const outcome = rig.client.completed.at(-1)!.outcome as any;
+    assert.equal(outcome.kind, 'provision_agent');
+    const check = (name: string) => outcome.checks.find((candidate: any) => candidate.name === name);
+    for (const required of REQUIRED_VERIFICATION_CHECKS) {
+      assert.ok(check(required)?.passed && check(required)?.evidence, `missing verification: ${required}`);
+    }
+
+    // The communication and escalation evidence cites the server-returned ids.
+    const eventIds = new Set(rig.client.events.map(event => event.id));
+    for (const name of ['communication', 'escalation']) {
+      const cited = check(name).evidence.eventIds as string[];
+      assert.ok(cited.length > 0 && cited.every(id => eventIds.has(id)), `${name} must cite persisted attempts events`);
+    }
+    assert.equal((rig.client.events.find(event => event.type === 'verification.communication')!.data as any).messageId, messageId);
+    assert.equal((rig.client.events.find(event => event.type === 'verification.escalation')!.data as any).escalationId, escalationId);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('provisioning fails closed when the control plane refuses the communication capability', async () => {
+  const rig = await makeRig(provisioningModel());
+  try {
+    rig.client.provisionCommunicationError = new WorkerError('DELEGATION_FORBIDDEN', 'Communication verification is unavailable', false);
+    const job = makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 });
+    rig.client.queue.push(job);
+    assert.equal(await rig.runtime.runOnce(), true);
+
+    // A refusal is never reported as activation, and nothing is fabricated.
+    assert.equal(rig.client.completed.length, 0, 'a refusal must not report activation');
     assert.equal(rig.client.failed.at(-1)!.code, 'VERIFICATION_BLOCKED');
-    assert.ok(rig.client.ops.includes('probeUnauthorized'), 'authentication is a real boundary probe');
-    assert.ok(rig.client.ops.includes('createMessage'), 'the worker must attempt the real delegated send');
-    assert.ok(rig.client.ops.includes('createEscalation'));
-    assert.equal(rig.client.messages.length, 0, 'the double mirrors the API and refuses the delegated send');
-    assert.equal(rig.client.escalations.length, 0);
+    assert.equal(rig.client.provisioningCommunications.length, 0);
 
     // A diagnostic records every check, including exactly the blocked ones.
     const diagnostic = rig.client.artifacts.find(artifact => artifact.path.endsWith('provisioning-verification.json'));

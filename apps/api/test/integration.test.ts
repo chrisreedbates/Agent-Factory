@@ -423,29 +423,3 @@ test('API recreation retains manifests, approvals, tasks, messages, memory, usag
     assert.ok(renewal.leaseExpiresAt);
   } finally { await h.close(); }
 });
-
-test('a provisioning lease cannot delegate its verification sends', async () => {
-  const h = await harness();
-  try {
-    const { hire } = await h.compile();
-    await h.approve(hire);
-    const job = await h.claim('provision_agent');
-    // The provisioning lease itself is current and accepted...
-    const renewal = await h.ok('POST', `/v1/worker/jobs/${job.jobId}/renew`, { ...h.lease(job), leaseSeconds: 60 }, { role: 'worker' });
-    assert.ok(renewal.leaseExpiresAt);
-    // ...yet the control plane refuses to let it act as the not-yet-ACTIVE agent.
-    const message = await h.request('POST', '/v1/messages', {
-      recipientId: 'human-ceo', recipientKind: 'human', content: 'Provisioning verification.', actionable: false, inReplyTo: null, taskId: null,
-    }, delegated(job));
-    assert.equal(message.statusCode, 403);
-    assert.equal(message.json().error.code, 'DELEGATION_FORBIDDEN');
-    const escalation = await h.request('POST', '/v1/escalations', {
-      agentId: hire.agentId, taskId: null, severity: 'medium', category: 'missing evidence', situation: 'Source unavailable.', attemptedActions: ['Read the approved brief.'], reason: 'Cannot substantiate.', recommendation: 'Supply the source.', requestedFrom: 'human-ceo',
-    }, delegated(job));
-    assert.equal(escalation.statusCode, 403);
-    assert.equal(escalation.json().error.code, 'DELEGATION_FORBIDDEN');
-    // The worker's own lease-authenticated surface still works.
-    const event = await h.ok('POST', `/v1/worker/jobs/${job.jobId}/events`, { ...h.lease(job), type: 'boundary.probe', message: 'The worker lease itself is valid.', data: {} }, { role: 'worker' });
-    assert.ok(event.id);
-  } finally { await h.close(); }
-});

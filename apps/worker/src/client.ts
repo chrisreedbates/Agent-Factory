@@ -31,7 +31,7 @@ interface RequestInput {
 export type ControlPlane = Pick<
   ControlPlaneClient,
   'claim' | 'renew' | 'appendEvent' | 'publishArtifact' | 'reserveBudget' | 'settleBudget' | 'complete' | 'fail' | 'asAgent'
-  | 'getAgent' | 'listMemory' | 'probeUnauthorized'
+  | 'getAgent' | 'listMemory' | 'probeUnauthorized' | 'verifyProvisionCommunication'
 >;
 
 export class ControlPlaneClient {
@@ -164,6 +164,20 @@ export class ControlPlaneClient {
   /** A delegated agent-capable call performed under the current run_task/learn lease. */
   asAgent<T>(job: ClaimedJob, operationId: string, path: string, body: unknown): Promise<T> {
     return this.request<T>(operationId, path, { body, jobId: job.jobId, lease: job, delegated: true });
+  }
+
+  /**
+   * Fenced provisioning communication verification (contract 1.1.0). Exercises the
+   * durable manager message and escalation paths during a current
+   * `provision_agent`/`reconfigure_agent` lease. The API binds the agent, approved
+   * manifest, recipients and content server-side, so the worker sends only its
+   * lease token and attempt: no delegated agent headers, recipients or content.
+   */
+  verifyProvisionCommunication(job: ClaimedJob): Promise<{ message: { id: string }; escalation: { id: string } }> {
+    return this.request('verifyProvisionCommunication', `/v1/worker/jobs/${encodeURIComponent(job.jobId)}/verify-communication`, {
+      body: { leaseToken: job.leaseToken, attempt: job.attempt },
+      jobId: job.jobId,
+    });
   }
 
   /** Read the agent's live record and current grants under the active lease. */

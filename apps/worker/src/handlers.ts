@@ -706,39 +706,15 @@ export class JobRunner {
     events.push(endToEndEvent);
     pass('end_to_end', makeEvidence({ artifactIds: [deliverableArtifact.id], eventIds: [...loop.eventIds, endToEndEvent], taskId: job.taskId, jobId: job.jobId, summary: `The model read ${loop.readCount} brief(s) and produced verified artifact ${deliverableArtifact.path}.` }));
 
-    // Checks the control plane's delegation policy refuses are recorded as
-    // blocked, never reported as passed.
+    // Checks the control plane refuses are recorded as blocked, never reported as
+    // passed, so activation cannot proceed on fabricated evidence.
     const blocked: { name: string; error: string }[] = [];
 
-    // communication: attempt the real persisted control-plane path. The current
-    // core contract forbids delegation during provisioning, so a refusal blocks
-    // the check instead of fabricating success.
+    // communication: the run must draft a manager reply and a policy-approved
+    // escalation so the intent is real. The persisted probe itself is server-bound.
     const reply = typeof draft.reply === 'string' ? draft.reply.trim() : '';
     if (!reply) throw new WorkerError('COMMUNICATION_UNVERIFIED', 'The provisioning run did not produce a manager reply', false);
     if (manifest.communication?.canContactManager !== true) throw new WorkerError('COMMUNICATION_POLICY', 'The manifest does not authorize manager contact', false);
-    guard.assertLive();
-    let verificationMessage: { id: string } | null = null;
-    let communicationEvent: string | null = null;
-    try {
-      verificationMessage = await this.deps.client.asAgent<{ id: string }>(job, 'createMessage', '/v1/messages', {
-        recipientId: manifest.organization.managerId,
-        recipientKind: manifest.organization.managerKind === 'human' ? 'human' : 'agent',
-        content: reply,
-        actionable: false,
-        inReplyTo: null,
-        taskId: null,
-      });
-    } catch (error) {
-      if (error instanceof LeaseLostError) throw error;
-      blocked.push({ name: 'communication', error: refusalReason(error) });
-    }
-    if (verificationMessage) {
-      communicationEvent = await this.observe(job, guard, 'verification.communication', 'Sent and persisted a real message through the control-plane path', { messageId: verificationMessage.id, recipientId: manifest.organization.managerId });
-      events.push(communicationEvent);
-      pass('communication', makeEvidence({ eventIds: [communicationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Persisted control-plane message ${verificationMessage.id} to ${manifest.organization.managerId}.` }));
-    }
-
-    // escalation: persist a real escalation through the control-plane path.
     const escalation = (draft.escalation ?? {}) as EscalationDraft;
     const approvedTriggers = manifest.escalation.triggers as string[];
     const trigger = approvedTriggers.find(candidate => candidate.toLowerCase() === String(escalation.trigger ?? '').trim().toLowerCase());
@@ -747,29 +723,36 @@ export class JobRunner {
     if (!trigger || !situation || !recommendation) {
       throw new WorkerError('ESCALATION_UNVERIFIED', 'The provisioning run did not produce a valid, policy-approved escalation', false);
     }
+
+    // communication + escalation: exercise the durable control-plane paths through
+    // the dedicated fenced provisioning-verification capability (contract 1.1.0).
+    // This is not delegated agent access: the API binds the agent, the approved
+    // manifest, the recipients and the persisted content server-side, and ordinary
+    // pre-ACTIVE delegation stays forbidden. The returned records are the only
+    // accepted proof, so a refusal blocks the checks instead of fabricating them.
     guard.assertLive();
+    let verificationMessage: { id: string } | null = null;
     let verificationEscalation: { id: string } | null = null;
+    let communicationEvent: string | null = null;
     let escalationEvent: string | null = null;
     try {
-      verificationEscalation = await this.deps.client.asAgent<{ id: string }>(job, 'createEscalation', '/v1/escalations', {
-        agentId: agent.id,
-        taskId: null,
-        severity: manifest.escalation.defaultSeverity ?? 'medium',
-        category: trigger,
-        situation,
-        attemptedActions: ['Provisioning verification read the approved briefs'],
-        reason: recommendation,
-        recommendation,
-        requestedFrom: manifest.escalation.managerId,
-      });
+      const verified = await this.deps.client.verifyProvisionCommunication(job);
+      verificationMessage = verified.message;
+      verificationEscalation = verified.escalation;
     } catch (error) {
       if (error instanceof LeaseLostError) throw error;
+      blocked.push({ name: 'communication', error: refusalReason(error) });
       blocked.push({ name: 'escalation', error: refusalReason(error) });
     }
+    if (verificationMessage) {
+      communicationEvent = await this.observe(job, guard, 'verification.communication', 'Exercised and persisted the approved manager communication path', { messageId: verificationMessage.id, managerId: manifest.organization.managerId, serverBound: true });
+      events.push(communicationEvent);
+      pass('communication', makeEvidence({ eventIds: [communicationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Persisted server-bound manager message ${verificationMessage.id}; the model drafted reply intent.` }));
+    }
     if (verificationEscalation) {
-      escalationEvent = await this.observe(job, guard, 'verification.escalation', 'Persisted a policy-approved escalation through the control-plane path', { escalationId: verificationEscalation.id, trigger, managerId: manifest.escalation.managerId });
+      escalationEvent = await this.observe(job, guard, 'verification.escalation', 'Exercised and persisted the approved escalation path', { escalationId: verificationEscalation.id, trigger, managerId: manifest.escalation.managerId, serverBound: true });
       events.push(escalationEvent);
-      pass('escalation', makeEvidence({ eventIds: [escalationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Persisted control-plane escalation ${verificationEscalation.id} for trigger "${trigger}".` }));
+      pass('escalation', makeEvidence({ eventIds: [escalationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Persisted server-bound escalation ${verificationEscalation.id}; the model drafted a policy-approved trigger "${trigger}".` }));
     }
 
     // observability: this attempt's model, tool and verification observations are persisted.
@@ -839,7 +822,7 @@ export class JobRunner {
     if (blocked.length) {
       const diagnostic = JSON.stringify({
         status: 'BLOCKED',
-        reason: 'The control plane refused delegated provisioning verification. These checks cannot pass until a core-owned provisioning-verification capability exists.',
+        reason: 'The control plane refused the fenced provisioning-verification capability (POST /v1/worker/jobs/:id/verify-communication), so the durable communication and escalation checks could not be exercised.',
         blocked,
         checks: [
           ...checks.map(check => ({ name: check.name, passed: true, error: null })),
@@ -847,7 +830,7 @@ export class JobRunner {
         ],
       }, null, 2);
       const diagnosticArtifact = await this.publish(job, guard, 'provisioning-verification.json', diagnostic, 'application/json');
-      await this.observe(job, guard, 'verification.blocked', 'Provisioning verification is blocked by the control-plane delegation policy', {
+      await this.observe(job, guard, 'verification.blocked', 'Provisioning verification is blocked by a control-plane refusal', {
         blocked: blocked.map(entry => entry.name), artifact: diagnosticArtifact.path,
       });
       throw new WorkerError('VERIFICATION_BLOCKED', `Provisioning cannot complete: ${blocked.map(entry => `${entry.name} (${entry.error})`).join('; ')}`, false);
