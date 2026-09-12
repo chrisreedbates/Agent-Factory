@@ -572,3 +572,58 @@ test('approved reconfiguration probe targets its current agent manager and rejec
     assert.deepEqual(await h.ok('GET', '/v1/escalations'), [result.escalation]);
   } finally { await h.close(); }
 });
+
+test('retryable provider failures use persisted jittered backoff without consuming immediate claims', async () => {
+  const h = await harness();
+  try {
+    const hire = await h.ok('POST', '/v1/hiring-requests', structuredClone(proposalFixture));
+    let job = await h.claim('compile_manifest');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      assert.equal(job.attempt, attempt);
+      await h.settleUsage(job);
+      const evidence = await h.appendEvidence(job);
+      const body = { ...h.lease(job), code: 'MODEL_CALL_FAILED', message: 'Transient upstream overload', retryable: true, evidence };
+      const result = await h.ok('POST', `/v1/worker/jobs/${job.jobId}/fail`, body, { role: 'worker' });
+      assert.equal(result.status, attempt < 3 ? 'QUEUED' : 'FAILED');
+      const repeated = await h.ok('POST', `/v1/worker/jobs/${job.jobId}/fail`, body, { role: 'worker' });
+      assert.equal(repeated.duplicate, true);
+      const events = await h.ok('GET', `/v1/events?agentId=${hire.agentId}&limit=100`);
+      const failure = events.filter((e: Document) => e.type === 'job.failed').at(-1);
+      assert.deepEqual(failure.data.evidence, evidence);
+      if (attempt === 3) {
+        assert.equal(failure.data.retryNotBefore, null);
+        break;
+      }
+      const before = await h.ok('POST', '/v1/worker/jobs/claim', { kinds: ['compile_manifest'], leaseSeconds: 60 }, { role: 'worker' });
+      assert.equal(before, null);
+      await h.restart();
+      h.advance(attempt === 1 ? 1_999 : 3_999);
+      assert.equal(await h.ok('POST', '/v1/worker/jobs/claim', { kinds: ['compile_manifest'], leaseSeconds: 60 }, { role: 'worker' }), null);
+      h.advance(1_002); // Maximum jitter elapsed; exactly one new attempt is now admitted.
+      job = await h.claim('compile_manifest');
+    }
+    h.advance(60_000);
+    assert.equal(await h.ok('POST', '/v1/worker/jobs/claim', { kinds: ['compile_manifest'], leaseSeconds: 60 }, { role: 'worker' }), null);
+  } finally { await h.close(); }
+});
+
+test('permanent provider failure stays terminal and preserves diagnostic evidence', async () => {
+  const h = await harness();
+  try {
+    const hire = await h.ok('POST', '/v1/hiring-requests', structuredClone(proposalFixture));
+    const job = await h.claim('compile_manifest');
+    await h.settleUsage(job);
+    const evidence = await h.appendEvidence(job);
+    await h.ok('POST', `/v1/worker/jobs/${job.jobId}/fail`, {
+      ...h.lease(job), code: 'MODEL_CALL_FAILED', message: 'Invalid model configuration', retryable: false, evidence,
+    }, { role: 'worker' });
+    h.advance(60_000);
+    await h.restart();
+    assert.equal(await h.ok('POST', '/v1/worker/jobs/claim', { kinds: ['compile_manifest'], leaseSeconds: 60 }, { role: 'worker' }), null);
+    const events = await h.ok('GET', `/v1/events?agentId=${hire.agentId}&limit=100`);
+    const failure = events.find((e: Document) => e.type === 'job.failed');
+    assert.deepEqual(failure.data.evidence, evidence);
+    assert.equal(failure.data.retryNotBefore, null);
+    assert.equal(failure.data.retryable, false);
+  } finally { await h.close(); }
+});

@@ -89,7 +89,11 @@ test('retryable failure is idempotent and exhausted jobs stop retrying', async (
       const receipt = await h.call('failJob', failure, job.jobId);
       assert.equal(receipt.status, attempt < 3 ? 'QUEUED' : 'FAILED');
       assert.equal((await h.call('failJob', failure, job.jobId)).duplicate, true);
-      if (attempt < 3) job = await h.claim();
+      if (attempt < 3) {
+        assert.equal(await h.claim(), null);
+        h.advance(5_001);
+        job = await h.claim();
+      }
     }
     assert.equal(await h.claim(), null);
     assert.equal((await h.tx(s => s.get('tasks', job.taskId))).status, 'FAILED');
@@ -255,7 +259,11 @@ test('human remediation retries exhausted retirement without changing its approv
     for (let attempt = 1; attempt <= 3; attempt++) {
       assert.equal(job.attempt, attempt);
       await h.call('failJob', { ...h.lease(job), code: 'CLEANUP_UNAVAILABLE', message: 'Temporary cleanup failure', retryable: true, evidence: null }, job.jobId);
-      if (attempt < 3) job = await h.claim('retire_agent');
+      if (attempt < 3) {
+        assert.equal(await h.claim('retire_agent'), null);
+        h.advance(5_001);
+        job = await h.claim('retire_agent');
+      }
     }
     assert.equal(await h.claim('retire_agent'), null);
     assert.equal((await h.tx(s => s.get('agents', agent.id))).status, 'TERMINATING');

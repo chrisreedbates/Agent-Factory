@@ -56,3 +56,23 @@ test('retries an unresolved command after reload without persisting its content'
   const stored=await page.evaluate(()=>Object.entries(sessionStorage));expect(stored).toHaveLength(1);expect(stored[0][0]).toMatch(/^agent-factory:pending:[a-f0-9]{64}$/);expect(stored[0][1]).toBe(keys[0]);expect(JSON.stringify(stored)).not.toContain('Private');
   await page.reload();await fill();await form.getByRole('button').click();await expect(form.getByPlaceholder('Objective',{exact:true})).toHaveValue('');expect(keys).toHaveLength(2);expect(keys[0]).toBe(keys[1]);expect(await page.evaluate(()=>Object.keys(sessionStorage))).toHaveLength(0);
 });
+
+test('keeps terminal agents off the board while retaining selectable audit evidence and recruitment provenance',async({page})=>{
+  const archived={...child,id:'archived',status:'ARCHIVED',manifest:{...child.manifest,agent:{...child.manifest.agent,id:'archived',name:'Retired writer'}}};
+  const rejected={...child,id:'rejected',status:'REJECTED',manifest:{...child.manifest,agent:{...child.manifest.agent,id:'rejected',name:'Rejected writer'}}};
+  const terminating={...child,id:'terminating',status:'TERMINATING',manifest:{...child.manifest,agent:{...child.manifest.agent,id:'terminating',name:'Retiring writer'}}};
+  await page.route('**/v1/organization',route=>route.fulfill({json:{data:{organization:{id:'org',name:'Test organization',mission:'Test'},coordinator:{id:'factory',name:'Factory'},teams:[],agents:[agent,child,archived,rejected,terminating]}}}));
+  await page.route('**/v1/hiring-requests',route=>route.fulfill({json:{data:[{id:'hire-rejected',agentId:'rejected',status:'REJECTED',proposal:{role:'Rejected writer'},requestedBy:{kind:'agent',id:'manager'},originatingTaskId:'source-task',originatingJobId:'source-job',approvedBy:null,approvedManifestVersion:null,provisionedBy:null,manifest:rejected.manifest}]}}));
+  for(const a of [archived,rejected])await page.route(`**/v1/agents/${a.id}`,route=>route.fulfill({json:{data:{agent:a,verification:[{name:'workspace-files',passed:false,error:'Historical verification evidence'}],grants:[],resources:[]}}}));
+  await page.reload();
+  const tree=page.getByLabel('Reporting hierarchy');await expect(tree.getByRole('button',{name:/Retired writer|Rejected writer/})).toHaveCount(0);await expect(tree.getByRole('button',{name:/Retiring writer/})).toBeVisible();
+  const recruitment=page.locator('section').filter({has:page.getByRole('heading',{name:'Recursive recruitment',exact:true})});await expect(recruitment).not.toContainText('Rejected writer');
+  await page.getByText('Inspect rejected and archived agents and hiring records',{exact:true}).click();
+  const history=page.locator('section').filter({has:page.getByRole('heading',{name:'Agent and recruitment history',exact:true})});
+  await expect(history).toContainText('Requested by agent Manager (manager)');await expect(history).toContainText('source-task');await expect(history).toContainText('source-job');
+  for(const [name,id] of [['Retired writer','archived'],['Rejected writer','rejected']]){
+    await history.getByRole('button',{name:new RegExp(name)}).click();
+    const detail=page.locator('section').filter({has:page.getByRole('heading',{name:`Agent detail: ${id}`,exact:true})});
+    await expect(detail).toContainText('Historical verification evidence');await expect(detail.locator('pre')).toContainText(name);await expect(detail.getByRole('button',{name:'retire',exact:true})).toHaveCount(0);
+  }
+});

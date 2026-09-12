@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 import { Agent, Task, Message, HiringRequest, Organization, Team } from '@agent-factory/contracts';
 import { readArtifact } from './artifacts.js';
 import { Store, digest, type Actor, type RecordData } from './store.js';
@@ -239,6 +239,8 @@ export class WorkerService {
       if (!body.kinds.includes(job.kind)) continue;
       const expired = job.status === 'RUNNING' && Date.parse(job.leaseExpiresAt) <= this.store.now().getTime();
       if (job.status !== 'QUEUED' && !expired) continue;
+      // Persisted pacing applies across workers and API restarts, without consuming an attempt.
+      if (job.status === 'QUEUED' && job.retryNotBefore && Date.parse(job.retryNotBefore) > this.store.now().getTime()) continue;
       let agent = await this.store.get('agents', job.agentId);
       if (agent.budgetExceeded && job.kind !== 'retire_agent') continue;
       if (['run_task', 'learn'].includes(job.kind) && (agent.status !== 'ACTIVE' || agent.cancellationRequested)) continue;
@@ -539,7 +541,10 @@ export class WorkerService {
     if (job.status === 'COMPLETED') throw new DomainError('JOB_TERMINAL', 'A completed job cannot fail');
     if (body.evidence) await this.evidence(job, body.evidence);
     const retry = body.retryable && job.attempt < MAX_ATTEMPTS;
-    await this.store.save('jobs', { ...job, status: retry ? 'QUEUED' : 'FAILED', lastFailure: { code: body.code, message: body.message }, failureDigest });
+    const retryDelayMs = retry ? Math.min(30_000, 2_000 * 2 ** Math.max(0, job.attempt - 1)) + randomInt(0, 1_001) : null;
+    const retryNotBefore = retryDelayMs === null ? null : new Date(this.store.now().getTime() + retryDelayMs).toISOString();
+    await this.store.save('jobs', { ...job, status: retry ? 'QUEUED' : 'FAILED',
+      lastFailure: { code: body.code, message: body.message, evidence: body.evidence ?? null }, failureDigest, retryNotBefore });
     const agent = await this.store.get('agents', job.agentId);
     if (['compile_manifest', 'provision_agent', 'reconfigure_agent'].includes(job.kind) && ['SPECIFYING', 'PROVISIONING', 'RECONFIGURING', 'VERIFYING'].includes(agent.status)) {
       await this.transitionAgent(agent, 'REMEDIATING');
@@ -561,7 +566,7 @@ export class WorkerService {
       await this.store.save('messages', { ...message, deliveryStatus: 'failed', blockedReason: body.code });
     }
     await this.refreshActivity(agent.id);
-    await this.store.event('job.failed', body.message, this.context(job, actor), { code: body.code, retryable: retry });
+    await this.store.event('job.failed', body.message, this.context(job, actor), { code: body.code, retryable: retry, retryNotBefore, evidence: body.evidence ?? null });
     return { jobId: job.id, status: retry ? 'QUEUED' : 'FAILED', duplicate: false };
   }
 

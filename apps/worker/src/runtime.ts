@@ -1,6 +1,7 @@
 import type { ControlPlane } from './client.js';
 import type { WorkerConfig } from './config.js';
 import { LeaseLostError, WorkerError } from './errors.js';
+import { ModelCallError } from './model.js';
 import { JobLedger, type JobRunner } from './handlers.js';
 import type { ClaimedJob } from './types.js';
 
@@ -87,6 +88,7 @@ export class WorkerRuntime {
       }
       const failure = error instanceof WorkerError ? error : new WorkerError('WORKER_FAILURE', (error as Error).message, false);
       log('job failed', { jobId: job.jobId, kind: job.kind, code: failure.code, retryable: failure.retryable });
+      if (error instanceof ModelCallError) ledger.record(error.usage);
       // Release any reservation to the usage actually recorded, then report the failure.
       try {
         await ledger.settle();
@@ -94,7 +96,7 @@ export class WorkerRuntime {
         log('could not settle reservation while failing', { jobId: job.jobId, error: (settleError as Error).message });
       }
       try {
-        await client.fail(job, { code: failure.code, message: failure.message, retryable: failure.retryable, evidence: null });
+        await client.fail(job, { code: failure.code, message: failure.message, retryable: failure.retryable, evidence: failure.evidence ?? null });
       } catch (reportError) {
         log('could not report job failure', { jobId: job.jobId, error: (reportError as Error).message });
       }
