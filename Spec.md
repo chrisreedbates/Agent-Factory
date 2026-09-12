@@ -274,6 +274,7 @@ observability:
   logs: true
   traces: true
   metrics: true
+```
 
 # 7. Recruitment Workflow
 
@@ -1331,3 +1332,41 @@ Do NOT attempt to implement the entire vision during the hackathon.
 The goal is one convincing vertical slice demonstrating the architecture.
 
 ## Recommended Demo
+
+
+The project owner supplied the following demo target after this specification's
+planning baseline. It defines the hackathon vertical slice; the broader vision
+and requirements above remain intact.
+
+Begin with four operational employees provisioned through the actual factory:
+two initial employees and one autonomous recruit requested by each. During the
+live segment, one descendant identifies a further capability gap and submits a
+hiring request. A human approves the reviewed manifest, and the factory
+coordinator provisions and behaviorally verifies the next-generation employee.
+That new employee performs a small delegated task and replies to its requester.
+
+One example organization is Human CEO → Research Lead → Evidence Analyst →
+Source Reviewer (created live), alongside Human CEO → Delivery Lead → Report
+Writer. These role names are illustrative implementation defaults, not fixed
+model outputs. The factory coordinator provisions every employee; it is a
+separate durable identity from each employee's reporting manager.
+
+Prepare the first four employees through genuine model-driven recruitment,
+human approval, provisioning and verification. Seed only organization, teams,
+standards and source briefs. Do not seed ACTIVE employees, approvals, recruiting
+history or verification evidence. Initial hiring requests can originate from
+the operator's organization objective; descendant proposals must originate from
+real agent execution.
+
+Use one configured real model and restricted workspace-files capabilities for
+the underlying work. Persist communication, scoped memory, evidence-backed
+learning and restart recovery. Verify a bounded consultant and governed
+retirement as supporting capabilities. Social networks, Slack, CRM and email
+remain examples from the broader vision; unimplemented integrations must be
+reported as unavailable rather than treated as MVP dependencies.
+
+Machine 1 owns the authoritative control plane and shared contract, Machine 2
+the runtime and recruitment behavior, and Machine 3 the operator console and
+integrated verification. A component passing its own tests does not establish
+the whole-system Definition of Done in §24. The final integrated branches and
+actual final main commit must still pass the real live workflow.

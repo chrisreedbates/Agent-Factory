@@ -1,0 +1,23 @@
+{
+  "name": "@agent-factory/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "dev": "node --import tsx src/server.ts",
+    "test:postgres": "node --import tsx --test test/integration.test.ts"
+  },
+  "dependencies": {
+    "@agent-factory/contracts": "workspace:*",
+    "@agent-factory/db": "workspace:*",
+    "fastify": "5.6.2",
+    "@fastify/cookie": "11.0.2",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.6",
+    "@electric-sql/pglite": "0.3.14"
+  }
+}
