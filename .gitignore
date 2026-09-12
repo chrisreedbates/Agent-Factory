@@ -7,3 +7,5 @@ coverage/
 artifacts/
 .sources/
 *.tsbuildinfo
+test-results/
+playwright-report/
