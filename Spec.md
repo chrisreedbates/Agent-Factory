@@ -1,3 +1,280 @@
+# Agent Organization Control Plane
+## Product & Technical Specification
+
+**Status:** Hackathon MVP  
+**Working concept:** An operating system for AI-native organizations
+
+---
+
+# 1. Product Vision
+
+Build a meta-agent that can recruit, provision, configure, train, deploy, manage, observe, and retire other AI agents as if they were members of an organization.
+
+Instead of manually creating prompts, wiring APIs, configuring memory, setting up infrastructure, and building communication channels every time a new agent is needed, the user describes the role they want filled.
+
+The system handles the rest.
+
+Example:
+
+> "Hire a Social Media Manager for the Growth team. They report to the CMO. Their mission is to grow our organic social presence across LinkedIn, X, Instagram, and Facebook."
+
+The system should transform that request into a functioning persistent agent with:
+
+- identity
+- organizational role
+- manager
+- team
+- mission
+- responsibilities
+- success metrics
+- operating standards
+- model/runtime
+- tools
+- API access
+- memory architecture
+- communication channels
+- escalation rules
+- learning loop
+- permissions
+- budget
+- logs
+- observability
+- evaluation framework
+
+The resulting agent should be operational, addressable, observable, and persistent.
+
+The organization itself should also be recursive:
+
+**Existing agents can identify capability gaps and request that new agents be recruited.**
+
+A human can approve the request, after which the meta-agent provisions the new agent automatically.
+
+---
+
+# 2. Core Product Principle
+
+Agents are first-class organizational entities.
+
+An agent is NOT simply:
+
+`prompt + model + tools`
+
+An agent is:
+
+`identity + role + mission + organization + runtime + tools + permissions + memory + standards + evaluation + learning + escalation + communication + observability`
+
+The system manages the entire lifecycle.
+
+---
+
+# 3. Primary User Experience
+
+The fundamental interaction should be:
+
+> "I need someone who can do X."
+
+The system determines:
+
+1. What role is required?
+2. Is this a persistent employee or temporary consultant?
+3. Which team should own the agent?
+4. Who should manage it?
+5. What mission should it receive?
+6. What responsibilities should it have?
+7. What tools does it require?
+8. What APIs must be connected?
+9. What permissions should it receive?
+10. What model/runtime is appropriate?
+11. What memory architecture does it need?
+12. What information should it inherit?
+13. What success metrics should apply?
+14. What standards should govern its work?
+15. What learning loop should it use?
+16. When should it escalate?
+17. Who should it communicate with?
+18. What should humans be able to observe?
+19. What budget/resource constraints apply?
+20. How should its performance be evaluated?
+
+The system then provisions the agent.
+
+---
+
+# 4. Agent Types
+
+## 4.1 Persistent Employee Agent
+
+A persistent agent occupies an ongoing organizational role.
+
+Examples:
+
+- CMO
+- SDR
+- Social Media Manager
+- Customer Support Agent
+- Release Captain
+- Research Analyst
+
+Persistent agents have:
+
+- stable identity
+- permanent organizational position
+- persistent memory
+- ongoing mission
+- recurring responsibilities
+- manager
+- teammates
+- communication channels
+- learning history
+- performance history
+- escalation paths
+- recurring execution loops
+
+Persistent agents should improve over time.
+
+---
+
+## 4.2 Consultant / Mission Agent
+
+A consultant is created for a bounded objective.
+
+Examples:
+
+> "Research the French accounting software market."
+
+> "Audit our authentication architecture."
+
+> "Determine why conversion fell last week."
+
+A consultant receives:
+
+- explicit mission
+- context
+- deliverable
+- constraints
+- tools
+- budget
+- deadline or termination condition
+
+It does NOT necessarily require permanent organizational memory or a recurring operating loop.
+
+When the mission completes:
+
+1. Deliverable is produced.
+2. Relevant knowledge is extracted.
+3. Knowledge is stored for appropriate teams/agents.
+4. Consultant is archived or terminated.
+5. Resources and credentials are revoked where appropriate.
+
+---
+
+# 5. Organizational Model
+
+The system maintains an explicit organizational graph.
+
+Example:
+
+CEO
+└── CMO
+    ├── Social Media Manager
+    ├── Content Strategist
+    └── SDR Manager
+        ├── SDR 1
+        └── SDR 2
+
+Every persistent agent should know:
+
+- who it is
+- what team it belongs to
+- who manages it
+- who reports to it
+- which peers it can collaborate with
+- what the organization is trying to accomplish
+- what its own mission contributes to
+
+Organizational relationships must be stored as structured state, not inferred repeatedly from prompts.
+
+---
+
+# 6. Agent Definition
+
+Each agent should have an Agent Manifest.
+
+Example:
+
+```yaml
+agent:
+  id: smm_001
+  name: Maya
+  type: employee
+  status: active
+
+organization:
+  team: growth
+  manager: cmo_001
+  reports:
+    - null
+
+role:
+  title: Social Media Manager
+
+mission:
+  primary: >
+    Grow qualified awareness and engagement through organic
+    social media while maintaining company voice and standards.
+
+responsibilities:
+  - create posts
+  - publish approved content
+  - engage with relevant accounts
+  - respond to comments
+  - identify high-performing themes
+  - report performance
+
+success_metrics:
+  - qualified engagement
+  - audience growth
+  - inbound conversations
+  - content performance
+
+runtime:
+  model: configurable
+  execution_environment: sandboxed
+
+tools:
+  - linkedin
+  - x
+  - facebook
+  - instagram
+  - analytics
+
+permissions:
+  linkedin:
+    read: true
+    write: true
+
+memory:
+  working: enabled
+  episodic: enabled
+  semantic: enabled
+  canonical: enabled
+
+learning:
+  enabled: true
+  cadence: daily
+
+escalation:
+  manager: cmo_001
+
+budget:
+  model_calls_daily: 10
+  external_spend_daily: 5
+
+observability:
+  logs: true
+  traces: true
+  metrics: true
+
 # 7. Recruitment Workflow
 
 The primary workflow is:
