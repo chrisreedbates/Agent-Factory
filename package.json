@@ -1,0 +1,1 @@
+{"name":"agent-factory","private":true,"packageManager":"pnpm@10.0.0","scripts":{"check":"pnpm --filter @agent-factory/web check","test":"pnpm --filter @agent-factory/web test","build":"pnpm --filter @agent-factory/web build"}}
