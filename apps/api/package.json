@@ -6,7 +6,8 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "dev": "node --import tsx src/server.ts"
+    "dev": "node --import tsx src/server.ts",
+    "test:postgres": "node --import tsx --test test/integration.test.ts"
   },
   "dependencies": {
     "@agent-factory/contracts": "workspace:*",

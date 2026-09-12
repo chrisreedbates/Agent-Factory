@@ -28,7 +28,7 @@ Core checks are independent. The combined check fails explicitly until sibling r
 
 ## Contracts and handoff
 
-The versioned contract, generated OpenAPI, schemas and concrete fixtures live in [packages/contracts](packages/contracts). `/v1` is the API boundary; only the API accesses PostgreSQL. See [bootstrap and integration rules](docs/control-plane/bootstrap.md). The first shared bootstrap commit is recorded in issue #1; sibling machines branch from that exact commit. Do not merge this lane or enable auto-merge before the coordinating machine's integration review.
+The versioned contract, generated OpenAPI, schemas and concrete fixtures live in [packages/contracts](packages/contracts). `/v1` is the API boundary; only the API accesses PostgreSQL. See [bootstrap and integration rules](docs/control-plane/bootstrap.md) and [authentication, worker protocol, governance and recovery](docs/control-plane/operations.md). The first shared bootstrap commit is recorded in issue #1; sibling machines branch from that exact commit. Do not merge this lane or enable auto-merge before the coordinating machine's integration review.
 
 ## Demo target
 
