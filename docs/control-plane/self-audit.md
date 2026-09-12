@@ -1,6 +1,6 @@
 # Machine 1 completion and verification boundary
 
-Contract version: **1.0.1**. This pull request is the control-plane lane for
+Contract version: **1.1.0**. This pull request is the control-plane lane for
 issue #1. It provides shared contracts and authoritative durable governance;
 Machine 2 supplies actual model/runtime execution and Machine 3 supplies the
 operator console and final system evidence.

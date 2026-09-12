@@ -1,6 +1,6 @@
 # Operating the control plane
 
-Contract: **1.0.1**. Bootstrap: `0056cc9218d8c1d6274437b8396d11537583f01f`.
+Contract: **1.1.0**. Bootstrap: `0056cc9218d8c1d6274437b8396d11537583f01f`.
 
 ## Start and authenticate
 
@@ -40,6 +40,8 @@ Pausing cancels existing work and fences its leases. Resume restores admission a
 
 Escalating a task makes it terminal and fences the run. Resolving it may create linked follow-up work; it never resurrects the original task. Retirement requires approval and refuses live reports: reconfigure their reporting relationships first. Retirement cancels work, disables schedules, requires cleanup evidence, revokes resource/grant state and retains all memory, messages, tasks and events. A consultant completing its bounded task is paused and receives a pending retirement review.
 
+If retirement cleanup fails permanently or exhausts its worker retries, the agent remains `TERMINATING`. After correcting the cause, the human operator can submit the `remediate` lifecycle action with the current agent version. This queues one new cleanup job using the original approved retirement scope and preserves cancellation of ordinary work. Remediation is rejected while cleanup is queued or running; it does not create a new approval or reactivate the agent.
+
 All state, jobs and audit events commit in one PostgreSQL transaction. An organization row lock serializes authority-changing operations across API processes. The local deployment has one configured tenant/operator/worker credential. Horizontal multi-tenant administration and high-throughput scheduling remain later work.
 
 ## Tests
@@ -47,3 +49,19 @@ All state, jobs and audit events commit in one PostgreSQL transaction. An organi
 `pnpm check:core` and `pnpm test:core` cover contracts, pure governance, storage and HTTP/database integration. Local storage tests use PGlite (PostgreSQL compiled to WASM), including an on-disk restart test. CI repeats API integration against PostgreSQL 17.6 via `TEST_DATABASE_URL=... pnpm --filter @agent-factory/api test:postgres`.
 
 `pnpm check:combined` intentionally fails without the sibling implementations. Machine 3 supplies real browser/system evidence in an integrated checkout before merge, then repeats the live smoke workflow on final main. Do not count the fixtures or scaffold checks as proof of the recursive recruitment demo.
+
+## Provisioning communication verification (contract 1.1.0)
+
+A provisioning or reconfiguration worker calls `POST /v1/worker/jobs/:id/verify-communication` with its worker bearer credential, an `Idempotency-Key`, and `{leaseToken, attempt}`. The API validates the current lease, lifecycle, cancellation state, exact approved manifest version, manager identity and communication policy. It derives all record identities and content; arbitrary request fields are rejected.
+
+The response contains `data.message` and `data.escalation`. These are durable, manager-visible probes: a non-actionable queued message and a low-severity OPEN escalation categorized `provisioning_verification`. They create no task, do not activate the agent, and do not establish a manager reply or model execution. The manager may resolve the probe normally. The API records a job/attempt-scoped audit event with both IDs. One pair is created per attempt even if the client changes its retry key. Cached responses still require a live, uncancelled, approved attempt.
+
+Machine 2 must replace its provisioning calls to ordinary `/v1/messages` and `/v1/escalations` with this dedicated operation, then persist worker evidence referencing the returned record IDs. Ordinary pre-ACTIVE delegation stays forbidden. All remaining provisioning verification and usage requirements still apply.
+
+## Combined local deployment
+
+Use `docker compose -f compose.yaml -f compose.full.yaml up -d --build` from the repository root. Set distinct random operator/worker tokens, a real `OPENAI_API_KEY`, `MODEL_NAME`, and `PUBLIC_ORIGIN=http://localhost:8080` in the ignored `.env` before startup. Open `http://localhost:8080`; nginx proxies `/v1` to the API on the same origin. PostgreSQL persists in the Compose volume, the API mounts the shared agent workspace read-only, and the worker mounts it read/write with `sources/` mounted read-only. Source briefs contain input facts only, never employees, approvals or verification outcomes.
+
+The supported `send_message` tool has only the `send` operation. The runtime revalidates its current grant and uses the authenticated `/v1/messages` operation; the API still enforces communication scope and derives sender identity. An actionable message schedules durable work and a correlated reply. It cannot approve a hire or expand permissions.
+
+Run `pnpm check:combined` for deterministic integration and browser behavior gates. Run `pnpm verify:live` in an interactive terminal following `docs/verification/live-acceptance.md` for real model execution and exact human approvals. Missing credentials or unfinished stages block live acceptance; a reachable empty deployment is only a smoke result. Preserve final live evidence for the actual reviewed Git SHA and repeat after the final merge.

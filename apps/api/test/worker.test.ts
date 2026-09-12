@@ -10,6 +10,7 @@ import { manifest, agent, hire, task as taskFixture } from '@agent-factory/contr
 import { Store, transaction, type RecordData } from '../src/store.js';
 import { WorkerService, enqueue } from '../src/worker.js';
 import { DomainError } from '../src/domain.js';
+import { Service } from '../src/service.js';
 
 // Deliberately initialized policy fixtures, never demo seed data or runtime evidence.
 async function harness(status = 'ACTIVE') {
@@ -232,5 +233,87 @@ test('message dispatch respects the pending task capacity and preserves blocked 
     const messages = await h.tx(s => s.list('messages'));
     assert.equal(messages.filter(m => m.deliveryStatus === 'blocked').length, 2);
     assert.equal(messages.filter(m => m.taskId).length, 1);
+  } finally { await h.close(); }
+});
+
+test('human remediation retries exhausted retirement without changing its approved cleanup scope', async () => {
+  const h = await harness();
+  try {
+    const human = { id: 'human-ceo', kind: 'human', organizationId: 'org-demo' };
+    const lifecycle = (action: string, reason: string) => h.tx(async s => {
+      const current = await s.get('agents', agent.id);
+      return new Service(s, human, h.artifactRoot).lifecycle(agent.id, { action, reason, expectedVersion: current.version });
+    });
+    const retirement = await lifecycle('retire', 'Approved cleanup scope');
+    const governance = retirement.governance;
+    assert.ok(governance);
+    await h.tx(s => new Service(s, human, h.artifactRoot).decideGovernance(governance.id,
+      { expectedVersion: governance.version, decision: 'approve', reason: 'Review complete' }));
+    let job = await h.claim('retire_agent');
+    const original = job;
+    await rejectsCode(() => lifecycle('remediate', 'Must not duplicate running cleanup'), 'RETIREMENT_IN_PROGRESS');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      assert.equal(job.attempt, attempt);
+      await h.call('failJob', { ...h.lease(job), code: 'CLEANUP_UNAVAILABLE', message: 'Temporary cleanup failure', retryable: true, evidence: null }, job.jobId);
+      if (attempt < 3) job = await h.claim('retire_agent');
+    }
+    assert.equal(await h.claim('retire_agent'), null);
+    assert.equal((await h.tx(s => s.get('agents', agent.id))).status, 'TERMINATING');
+    await h.tx(async s => {
+      const current = await s.get('agents', agent.id);
+      await rejectsCode(() => new Service(s, { ...human, id: agent.id, kind: 'agent' }, h.artifactRoot)
+        .lifecycle(agent.id, { action: 'remediate', expectedVersion: current.version, reason: 'Agent cannot restart cleanup' }), 'HUMAN_APPROVAL_REQUIRED');
+    });
+    const retried = await lifecycle('remediate', 'Storage is available again');
+    assert.equal(retried.agent.status, 'TERMINATING');
+    assert.equal(retried.agent.cancellationRequested, true);
+    await rejectsCode(() => lifecycle('remediate', 'Must not duplicate queued cleanup'), 'RETIREMENT_IN_PROGRESS');
+    job = await h.claim('retire_agent');
+    assert.notEqual(job.jobId, original.jobId);
+    assert.equal(job.attempt, 1);
+    assert.equal(job.payload.reason, 'Approved cleanup scope');
+    assert.equal(job.hiringRequestId, original.hiringRequestId);
+    await rejectsCode(() => h.call('appendJobEvent', { ...h.lease(original), type: 'cleanup.stale', message: 'Old attempt', data: {} }, original.jobId), 'STALE_LEASE');
+    const evidence = await h.observe(job);
+    await h.call('completeJob', { ...h.lease(job), outcome: { kind: 'retire_agent', evidence,
+      credentialsRevoked: true, runtimeDisabled: true, knowledgePreserved: true, activeTasksResolved: true } }, job.jobId);
+    assert.equal((await h.tx(s => s.get('agents', agent.id))).status, 'ARCHIVED');
+    assert.equal((await h.tx(s => s.list('approvals'))).length, 1);
+    assert.equal((await h.tx(s => s.list('jobs'))).filter(j => j.kind === 'retire_agent').length, 2);
+    await rejectsCode(() => lifecycle('remediate', 'Archived agents cannot restart'), 'INVALID_TRANSITION');
+  } finally { await h.close(); }
+});
+
+test('retirement remediation cannot turn an unapproved failed job into cleanup authority', async () => {
+  const h = await harness('TERMINATING');
+  try {
+    await h.queue('retire_agent');
+    const job = await h.claim('retire_agent');
+    await h.call('failJob', { ...h.lease(job), code: 'CLEANUP_FAILED', message: 'Cleanup failed', retryable: false, evidence: null }, job.jobId);
+    await rejectsCode(() => h.tx(async s => {
+      const current = await s.get('agents', agent.id);
+      return new Service(s, { id: 'human-ceo', kind: 'human', organizationId: 'org-demo' }, h.artifactRoot)
+        .lifecycle(agent.id, { action: 'remediate', expectedVersion: current.version, reason: 'No approved retirement exists' });
+    }), 'RETIREMENT_RETRY_UNAVAILABLE');
+    assert.equal((await h.tx(s => s.list('jobs'))).length, 1);
+  } finally { await h.close(); }
+});
+
+test('learning cannot claim another agent or another run canonical proposal', async () => {
+  const h = await harness();
+  try {
+    await h.queue('learn');
+    const job = await h.claim('learn');
+    const evidence = await h.observe(job); await h.settle(job);
+    const revision = await h.tx(s => s.insert('memory_entries', {
+      ownerAgentId: agent.id, category: 'canonical', status: 'PROPOSED',
+      provenance: { ...evidence, jobId: 'another-run' },
+    }));
+    const body = { ...h.lease(job), outcome: { kind: 'learn', learning: {
+      summary: 'Grounded lesson', memoryIds: [], canonicalRevisionId: revision.id, evidence,
+    } } };
+    await rejectsCode(() => h.call('completeJob', body, job.jobId), 'MEMORY_FORBIDDEN');
+    await h.tx(s => s.save('memory_entries', { ...revision, ownerAgentId: 'another-agent', provenance: evidence }));
+    await rejectsCode(() => h.call('completeJob', body, job.jobId), 'MEMORY_FORBIDDEN');
   } finally { await h.close(); }
 });

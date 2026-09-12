@@ -46,6 +46,7 @@ export class WorkerService {
       case 'reserveBudget': return this.reserve(id!, body, actor);
       case 'settleBudget': return this.settle(id!, body, actor);
       case 'publishArtifact': return this.publish(id!, body, actor);
+      case 'verifyProvisionCommunication': return this.verifyProvisionCommunication(id!, body, actor);
       default: throw new DomainError('NOT_FOUND', 'Unknown worker operation', 404);
     }
   }
@@ -65,6 +66,52 @@ export class WorkerService {
   private context(job: RecordData, actor?: Actor) {
     return { agentId: job.agentId, taskId: job.taskId, jobId: job.id, attempt: job.attempt,
       hiringRequestId: job.hiringRequestId, executedBy: actor?.id ?? job.workerPrincipalId };
+  }
+
+  async provisioningCommunicationContext(id: string, body: RecordData, actor: Actor) {
+    const job = await this.fence(id, body, actor);
+    if (!['provision_agent', 'reconfigure_agent'].includes(job.kind)) {
+      throw new DomainError('DELEGATION_FORBIDDEN', 'Communication verification requires a provisioning or reconfiguration job', 403);
+    }
+    const agent = await this.store.get('agents', job.agentId);
+    if (job.cancellationRequested || agent.cancellationRequested) throw new DomainError('EXECUTION_CANCELLED', 'Provisioning is cancelled');
+    if (!['PROVISIONING', 'RECONFIGURING', 'VERIFYING'].includes(agent.status)) throw new DomainError('AGENT_STATE', 'Communication verification requires an in-progress provisioning attempt');
+    if (!agent.approvedBy || !Number.isInteger(job.payload.manifestVersion) || agent.manifestVersion !== job.payload.manifestVersion || agent.approvedManifestVersion !== job.payload.manifestVersion) {
+      throw new DomainError('MANIFEST_NOT_APPROVED', 'Verification requires the exact approved job manifest');
+    }
+    const { managerId, managerKind } = agent.manifest.organization;
+    const manager = await this.store.get(managerKind === 'agent' ? 'agents' : 'principals', managerId);
+    if (managerKind === 'agent') assertWorkAdmission(manager as any);
+    else if (manager.kind !== 'human') throw new DomainError('INVALID_PRINCIPAL', 'The approved manager must be a human or agent', 403);
+    assertCommunicationScope({ id: agent.id, kind: 'agent', organizationId: agent.organizationId,
+      managerId, communication: agent.manifest.communication },
+    { id: manager.id, kind: managerKind, organizationId: manager.organizationId });
+    return { job, agent, managerId, managerKind };
+  }
+
+  private async verifyProvisionCommunication(id: string, body: RecordData, actor: Actor) {
+    const { job, agent, managerId, managerKind } = await this.provisioningCommunicationContext(id, body, actor);
+    // One real, non-actionable probe per fenced attempt, even across different retry keys.
+    const probeId = `provision-communication-${job.id}-${job.attempt}`;
+    const previous = await this.store.maybe('messages', probeId);
+    if (previous) return { message: previous, escalation: await this.store.get('escalations', probeId) };
+    const message = await this.store.insert('messages', {
+      sender: { id: agent.id, kind: 'agent', organizationId: agent.organizationId },
+      recipientId: managerId, recipientKind: managerKind,
+      content: 'Provisioning verification: testing the approved manager communication and escalation path. No work is requested.',
+      actionable: false, inReplyTo: null, taskId: null, inputJobId: job.id,
+      deliveryStatus: 'queued', blockedReason: null,
+    }, probeId);
+    const escalation = await this.store.insert('escalations', {
+      agentId: agent.id, taskId: null, severity: 'low', category: 'provisioning_verification',
+      situation: 'Provisioning verification of the approved manager escalation path.',
+      attemptedActions: ['Persisted a non-actionable communication probe to the approved manager.'],
+      reason: 'Verify escalation persistence before activation.', recommendation: 'Review and resolve this verification probe; no operational task is blocked.',
+      requestedFrom: managerId, status: 'OPEN', resolution: null, resolvedBy: null, followUpTaskId: null,
+    }, probeId);
+    await this.store.event('provisioning.communication_verified', 'Persisted manager message and escalation verification probes.',
+      this.context(job, actor), { messageId: message.id, escalationId: escalation.id, manifestVersion: job.payload.manifestVersion });
+    return { message, escalation };
   }
 
   private async refreshActivity(agentId: string) {
@@ -428,6 +475,7 @@ export class WorkerService {
       }
       if (outcome.learning.canonicalRevisionId) {
         const revision = await this.store.get('memory_entries', outcome.learning.canonicalRevisionId);
+        if (revision.ownerAgentId !== agent.id || revision.provenance?.jobId !== job.id) throw new DomainError('MEMORY_FORBIDDEN', 'Canonical learning must reference this agent’s current learning proposal', 403);
         if (revision.category !== 'canonical' || revision.status !== 'PROPOSED') throw new DomainError('APPROVAL_REQUIRED', 'Canonical learning requires a proposed revision', 403);
       }
       await this.store.insert('learning_proposals', { agentId: agent.id, ...outcome.learning });

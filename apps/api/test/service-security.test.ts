@@ -93,3 +93,10 @@ test('timestamps reject impossible calendar dates and retain valid UTC fractiona
  for(const value of ['2026-02-31T10:00:00.000Z','2026-13-01T10:00:00Z','2026-09-12T24:00:00Z','not-a-date'])assert.throws(()=>assertUtcTimestamp(value,'test'),code('INVALID_TIMESTAMP'));
  for(const value of ['2024-02-29T10:00:00Z','2026-09-12T10:00:00.123456Z',null])assert.doesNotThrow(()=>assertUtcTimestamp(value,'test'));
 });
+
+test('escalations are visible to their subject and intended manager, not unrelated peers', async () => {
+ const {service}=setup(employee);
+ assert.equal(await service.visible('escalations',{agentId:'child',requestedFrom:employee.id}),true);
+ assert.equal(await service.visible('escalations',{agentId:employee.id,requestedFrom:'human-ceo'}),true);
+ assert.equal(await service.visible('escalations',{agentId:'peer',requestedFrom:'other-manager'}),false);
+});

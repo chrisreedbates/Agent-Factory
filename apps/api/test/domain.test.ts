@@ -150,3 +150,8 @@ test('task completion needs substantive referenced evidence', () => {
     { ...evidence, eventIds: ['', 'event_1'] }, { ...evidence, artifactIds: ['artifact_1', 'artifact_1'] },
   ]) throwsCode(() => assertTaskCompletionEvidence(bad), 'EVIDENCE_REQUIRED');
 });
+
+test('governed message tool admits only the bounded send operation', () => {
+  assertSupportedGrants({ tools: ['send_message'], permissions: [{ tool: 'send_message', operations: ['send'], resource: null, credentialRef: null }] });
+  assert.throws(() => assertSupportedGrants({ tools: ['send_message'], permissions: [{ tool: 'send_message', operations: ['approve'], resource: null, credentialRef: null }] }));
+});
