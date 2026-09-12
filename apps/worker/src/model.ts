@@ -121,7 +121,18 @@ export class OpenAiAdapter implements ModelAdapter {
       const status = (error as any)?.status;
       throw new WorkerError('MODEL_CALL_FAILED', `Model call failed: ${(error as Error).message}`, status === 429 || status >= 500);
     }
-    const choice = response?.choices?.[0]?.message ?? {};
+    // Some compatible providers report upstream failures inside an HTTP 200
+    // response. Keep these retryable instead of treating them as model output.
+    if (response?.error) {
+      const detail = typeof response.error.message === 'string'
+        ? response.error.message.slice(0, 500)
+        : 'The provider returned an error response';
+      throw new WorkerError('MODEL_CALL_FAILED', `Model call failed: ${detail}`, true);
+    }
+    if (!Array.isArray(response?.choices) || !isRecord(response.choices[0]?.message)) {
+      throw new WorkerError('MODEL_CALL_FAILED', 'Model call failed: the provider response contained no valid message choice', true);
+    }
+    const choice = response.choices[0].message;
     const rawCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
     const toolCalls: ToolCall[] = rawCalls.map((call: any) => {
       let parsed: Record<string, unknown> = {};

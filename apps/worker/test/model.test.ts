@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAiAdapter } from '../src/model.js';
+import { WorkerError } from '../src/errors.js';
 
 test('provider adapter preserves finite nonnegative cost and leaves unknown or invalid cost null', async t => {
   const cases: Array<{ label: string; usage: unknown; expected: number | null }> = [
@@ -26,6 +27,36 @@ test('provider adapter preserves finite nonnegative cost and leaves unknown or i
       assert.equal(turn.usage.cost, expected);
       assert.equal(turn.usage.modelCalls, 1);
       assert.equal(turn.content, 'done');
+    });
+  }
+});
+
+test('provider adapter reports in-band upstream failures as retryable call failures', async () => {
+  const adapter = new OpenAiAdapter({ apiKey: null, baseURL: null, model: 'test-model' });
+  Object.assign(adapter, { client: { chat: { completions: { create: async () => ({
+    error: { message: 'Upstream error from Nvidia: Service temporarily overloaded' },
+  }) } } } });
+  await assert.rejects(adapter.turn({ system: 'Test', messages: [] }), error => {
+    assert.ok(error instanceof WorkerError);
+    assert.equal(error.code, 'MODEL_CALL_FAILED');
+    assert.equal(error.retryable, true);
+    assert.match(error.message, /Service temporarily overloaded/);
+    return true;
+  });
+});
+
+test('provider adapter rejects missing or malformed message choices as retryable call failures', async t => {
+  for (const response of [null, {}, { choices: [] }, { choices: [{}] }, { choices: [{ message: null }] }]) {
+    await t.test(JSON.stringify(response), async () => {
+      const adapter = new OpenAiAdapter({ apiKey: null, baseURL: null, model: 'test-model' });
+      Object.assign(adapter, { client: { chat: { completions: { create: async () => response } } } });
+      await assert.rejects(adapter.turn({ system: 'Test', messages: [] }), error => {
+        assert.ok(error instanceof WorkerError);
+        assert.equal(error.code, 'MODEL_CALL_FAILED');
+        assert.equal(error.retryable, true);
+        assert.match(error.message, /no valid message choice/);
+        return true;
+      });
     });
   }
 });
