@@ -170,6 +170,7 @@ export interface ToolGrant {
 const supportedOperations: Readonly<Record<string, readonly string[]>> = {
   'workspace-files': ['read', 'write', 'list'],
   request_hire: ['request'],
+  send_message: ['send'],
 };
 
 /** Local MVP capabilities only. null resource means the owning agent's isolated workspace. */

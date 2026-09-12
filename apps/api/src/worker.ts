@@ -475,6 +475,7 @@ export class WorkerService {
       }
       if (outcome.learning.canonicalRevisionId) {
         const revision = await this.store.get('memory_entries', outcome.learning.canonicalRevisionId);
+        if (revision.ownerAgentId !== agent.id || revision.provenance?.jobId !== job.id) throw new DomainError('MEMORY_FORBIDDEN', 'Canonical learning must reference this agent’s current learning proposal', 403);
         if (revision.category !== 'canonical' || revision.status !== 'PROPOSED') throw new DomainError('APPROVAL_REQUIRED', 'Canonical learning requires a proposed revision', 403);
       }
       await this.store.insert('learning_proposals', { agentId: agent.id, ...outcome.learning });

@@ -62,6 +62,7 @@ export class Service {
       const me=await this.scopedActor();
       if(table==='memory_entries') { if(row.status!=='ACTIVE'||(row.expiresAt&&row.expiresAt<=this.s.timestamp()))return false; assertMemoryAccess(me,row as any,'read'); return true; }
       if(table==='messages')return row.sender.id===me.id||row.recipientId===me.id;
+      if(table==='escalations')return row.agentId===me.id||row.requestedFrom===me.id;
       if(table==='hiring_requests')return row.requestedBy.id===me.id||row.agentId===me.id;
       if(table==='governance')return row.requestedBy.id===me.id||row.agentId===me.id;
       if(table==='artifacts') { assertMemoryAccess(me,{...row,ownerAgentId:row.agentId,category:'semantic'} as any,'read');return true; }

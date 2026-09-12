@@ -298,3 +298,22 @@ test('retirement remediation cannot turn an unapproved failed job into cleanup a
     assert.equal((await h.tx(s => s.list('jobs'))).length, 1);
   } finally { await h.close(); }
 });
+
+test('learning cannot claim another agent or another run canonical proposal', async () => {
+  const h = await harness();
+  try {
+    await h.queue('learn');
+    const job = await h.claim('learn');
+    const evidence = await h.observe(job); await h.settle(job);
+    const revision = await h.tx(s => s.insert('memory_entries', {
+      ownerAgentId: agent.id, category: 'canonical', status: 'PROPOSED',
+      provenance: { ...evidence, jobId: 'another-run' },
+    }));
+    const body = { ...h.lease(job), outcome: { kind: 'learn', learning: {
+      summary: 'Grounded lesson', memoryIds: [], canonicalRevisionId: revision.id, evidence,
+    } } };
+    await rejectsCode(() => h.call('completeJob', body, job.jobId), 'MEMORY_FORBIDDEN');
+    await h.tx(s => s.save('memory_entries', { ...revision, ownerAgentId: 'another-agent', provenance: evidence }));
+    await rejectsCode(() => h.call('completeJob', body, job.jobId), 'MEMORY_FORBIDDEN');
+  } finally { await h.close(); }
+});
