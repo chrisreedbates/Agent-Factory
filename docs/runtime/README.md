@@ -43,13 +43,15 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 | --- | --- |
 | `compile_manifest` | The real model drafts the narrative role; structural fields (team, manager, tools, grants, budget) come from the governance proposal. The assembled manifest is validated against the shared `AgentManifest` schema. |
 | `provision_agent` / `reconfigure_agent` | Runs the real mandatory checks and returns `steps`, `checks` and `resources`. Communication and escalation are exercised through the dedicated fenced `POST /v1/worker/jobs/:id/verify-communication` capability (see below). If the control plane refuses any check, the worker publishes a blocked diagnostic and fails closed instead of activating the agent. |
-| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. The agent's scoped memory is retrieved and given to the model, and completion requires a grounded evaluation gate over the persisted deliverable. |
+| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. The agent's scoped memory is retrieved and given to the model (a refused or failed retrieval fails the job rather than proceeding with empty context), and completion requires a grounded evaluation gate over the persisted deliverable. |
 | `learn` | The model proposes one grounded lesson from prior persisted evidence; the worker persists an artifact and the agent's own episodic memory whose provenance is the prior evidence, not itself. |
-| `retire_agent` | Verifies durable knowledge by reading it back, writes and re-reads a runtime-disable marker, copies the authorized knowledge bytes (with provenance and scope) into each `knowledgeRecipientIds` workspace and verifies retrieval as that recipient, then publishes a retirement record. |
+| `retire_agent` | Verifies the **whole** durable knowledge set by reading every item back (failing closed above the supported cap rather than dropping any), atomically replaces a runtime-disable marker, copies the authorized knowledge bytes (with provenance and scope) into each `knowledgeRecipientIds` workspace and verifies retrieval as that recipient, then publishes a retirement record. Every reported count and boolean is derived from the verified set. |
 
 **Budget.** Every non-retirement job reserves before model or tool execution and settles afterwards. Model/tool observations require an outstanding reservation, and completion requires settled usage with no outstanding reservation for the attempt.
 
 **Artifacts.** Files are written to `<agentId>/<jobId>/<attempt>/<name>`, hashed with SHA-256 and published with the current lease. Accepted artifacts are immutable; the API re-reads and verifies the bytes.
+
+**Mutable agent state.** Working memory, the retirement marker and consultant transfers are *not* attempt artifacts, so they are replaced through `replaceAttemptFile`: bytes go to a sibling temp file, are fsynced and are renamed over the destination, the lease is asserted before and after, and an attempt fence (kept outside the workspace roots) stops a stale attempt from clobbering state owned by a newer attempt. A partial or interleaved shared-state write is therefore impossible, and no work continues once the lease is gone.
 
 **Enforcement.** The model's tool calls are never trusted. Every call must name a tool that was offered for this attempt, pass argument validation, happen under a live lease, and still be granted by the control plane (`getAgent` is re-read immediately before the operation for `run_task`/`learn`). Undeclared, revoked or cancelled operations abort or are refused, never executed. The lease `AbortSignal` is threaded through the tool loop into the provider request, so a lost lease cancels an in-flight model call instead of billing it.
 
@@ -59,16 +61,16 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 
 Provisioning reports all mandatory check names: `runtime`, `model`, `tools`, `authentication`, `permissions`, `memory`, `communication`, `escalation`, `observability`, `evaluation`, `restart`, `end_to_end`. They are behavioural, not structural:
 
-- `runtime` / `memory` — durable write, read-back and hash comparison, with symlink-safe, exclusively created files.
+- `runtime` / `memory` — durable write, read-back and hash comparison, with symlink-safe, exclusively created files and atomic lease-fenced replacement of shared state.
 - `model` — the model must echo a fresh nonce exactly, so partial or negated replies fail.
-- `tools` / `permissions` — real reads of the agent's scoped briefs (`<sourceRoot>/<agentId>`), symlink-safe directory listing, a denied cross-agent read and allowlist validation.
+- `tools` / `permissions` — real reads of the agent's scoped briefs (`<sourceRoot>/<agentId>`), symlink-safe directory listing, and a cross-agent read refused against a **real sibling agent** on the volume (never a fabricated missing path), plus allowlist validation.
 - `authentication` — the control plane must reject a forged worker credential (401) while accepting the current lease.
 - `communication` / `escalation` — the run must draft a manager reply and a policy-approved escalation, then exercise the durable paths through the fenced `POST /v1/worker/jobs/:id/verify-communication` capability. The API binds the agent, approved manifest, recipients and persisted content server-side, so the worker sends only its lease token and attempt. The check passes only when the control plane returned both persisted records, and the evidence cites both returned IDs.
 - `evaluation` — a real model judgement over the persisted evidence. The evaluator is given the verified deliverable bytes and every recorded observation, must judge each `manifest.evaluation.criteria` entry **exactly once** (copied verbatim), and must cite persisted evidence from the attempt; duplicated, renamed, uncited or failed criteria fail the job.
-- `restart` — a **separate process** re-reads the artifact and must reproduce its SHA-256.
+- `restart` — a **separate process** re-initializes the storage layout from the configured root and recovers both the published artifact and the agent's working memory, reproducing their SHA-256 hashes.
 - `end_to_end` — one real model run that reads an approved brief, writes a deliverable and verifies the read-back hash.
 
-Checks that depend on unavailable integrations fail instead of passing: external credentials are refused, an unavailable model or a non-compliant provisioning run blocks activation, and the agent stays in `REMEDIATING`.
+Checks that depend on unavailable integrations fail instead of passing: external credentials are refused, an unavailable model or a non-compliant provisioning run blocks activation, and the agent stays in `REMEDIATING`. An authority, lifecycle or transport refusal of the fenced verification aborts the attempt immediately — no diagnostic is published under a lease the control plane has already withdrawn — and only a genuinely unimplemented capability is deferred to the blocked diagnostic.
 
 ### Provisioning communication verification (contract 1.1.0, fail closed)
 
@@ -94,7 +96,7 @@ pnpm --filter @agent-factory/worker check
 pnpm --filter @agent-factory/worker test
 ```
 
-Tests use an in-memory control plane that mirrors the API's fencing, reservation, evidence **and delegation** rules, plus a scripted model. The double refuses ordinary delegated provisioning sends exactly as the real API does and exposes the dedicated 1.1.0 capability with a refusal switch, so no test can pass a forbidden path and the fail-closed path is covered too. Coverage includes enforced tool dispatch, the grounded task and provisioning evaluation gates (rejecting duplicated, renamed and uncited criteria), provisioning activation through the fenced capability, fail-closed refusal, real recipient-readable consultant knowledge transfer, lease-loss abort, grounded learning, the client's exact verification wire shape, and refusal to fabricate success.
+Tests use an in-memory control plane that mirrors the API's fencing, reservation, evidence **and delegation** rules, plus a scripted model. The double refuses ordinary delegated provisioning sends exactly as the real API does and exposes the dedicated 1.1.0 capability with a refusal switch, so no test can pass a forbidden path and the fail-closed path is covered too. Coverage includes enforced tool dispatch, the grounded task and provisioning evaluation gates (rejecting duplicated, renamed and uncited criteria), provisioning activation through the fenced capability, fail-closed deferral of an unimplemented capability, immediate abort on an authority refusal, cross-agent denial against a real sibling agent, restart reinitialization with memory recovery, the retirement knowledge cap, atomic attempt-fenced state replacement, real recipient-readable consultant knowledge transfer, memory-retrieval failure failing closed, lease-loss abort, grounded learning, the client's exact verification wire shape, and refusal to fabricate success.
 
 Real Fastify/PostgreSQL coverage for the `verify-communication` authority lives in Machine 1's lane (PR #4), which owns `apps/api/**`; the runtime lane keeps the fail-closed side and its orchestration tests.
 

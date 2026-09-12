@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, readFile, readdir, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { WorkerError } from './errors.js';
 
@@ -139,16 +139,71 @@ export class Workspace {
     return { path: relativePath, absolutePath, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.byteLength, content: bytes };
   }
 
-  /** Write agent-scoped working knowledge that is not tied to a single attempt. */
-  async writeWorkspaceFile(agentId: string, name: string, content: string): Promise<string> {
+  /**
+   * Replace agent-scoped mutable state while holding the attempt fence. Bytes go
+   * to a sibling temp file, are fsynced and are renamed over the destination, so a
+   * crash or a concurrent writer can never leave a partial or interleaved file.
+   * `assertLive` runs before and after the replacement, and the recorded attempt
+   * fence stops a stale attempt from clobbering newer state even if its lease
+   * lapse has not been observed yet.
+   */
+  async replaceAttemptFile(
+    agentId: string,
+    jobId: string,
+    attempt: number,
+    name: string,
+    content: string,
+    assertLive: () => void,
+  ): Promise<string> {
     const relativePath = safeRelativePath(name);
     const root = this.rootFor('workspace', agentId);
     const absolute = this.resolveWithin(root, relativePath);
     await this.assertSafePath(this.artifactRoot, absolute);
     await mkdir(dirname(absolute), { recursive: true });
     await this.assertSafePath(this.artifactRoot, absolute);
-    await open(absolute, 'w').then(handle => handle.write(content).finally(() => handle.close()));
+
+    // The fence lives outside the workspace/output roots so it never appears as
+    // recoverable knowledge, and it records which attempt owns this path.
+    const fencePath = this.resolveWithin(this.artifactRoot, `${agentId}/fences/${createHash('sha256').update(relativePath).digest('hex')}.json`);
+    const fence = await readFile(fencePath, 'utf8')
+      .then(raw => JSON.parse(raw) as { jobId?: string; attempt?: number })
+      .catch(() => null);
+    if (fence && fence.jobId === jobId && typeof fence.attempt === 'number' && fence.attempt > attempt) {
+      throw new WorkerError('STALE_ATTEMPT', `Attempt ${attempt} may not overwrite state owned by attempt ${fence.attempt}`);
+    }
+
+    assertLive();
+    const temporary = `${absolute}.tmp-${attempt}-${randomUUID()}`;
+    const handle = await open(temporary, 'w');
+    try {
+      await handle.write(content);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    assertLive();
+    await rename(temporary, absolute);
+    await mkdir(dirname(fencePath), { recursive: true });
+    await writeFile(fencePath, JSON.stringify({ jobId, attempt, updatedAt: new Date().toISOString() }), 'utf8');
+    assertLive();
     return relativePath;
+  }
+
+  /**
+   * An existing sibling agent sharing this volume, so cross-agent isolation is
+   * proven against real data rather than a fabricated path name.
+   */
+  async otherAgent(agentId: string): Promise<string | null> {
+    for (const root of [this.artifactRoot, this.sourceRoot]) {
+      const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+      // Sorted so the reported sibling is stable across filesystems.
+      const siblings = entries
+        .filter(entry => entry.name !== agentId && (entry.isDirectory() || entry.isSymbolicLink()))
+        .map(entry => entry.name)
+        .sort();
+      if (siblings.length) return siblings[0]!;
+    }
+    return null;
   }
 
   async read(root: FileRoot, agentId: string, relativePath: string): Promise<string> {

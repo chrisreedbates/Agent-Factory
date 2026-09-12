@@ -60,9 +60,51 @@ test('workspace memory reads back verbatim and is agent scoped', async () => {
   const root = await mkdtemp(join(tmpdir(), 'af-worker-memory-'));
   try {
     const workspace = new Workspace(join(root, 'artifacts'), join(root, 'sources'));
-    await workspace.writeWorkspaceFile('agent-1', 'memory/working.json', '{"a":1}');
+    await workspace.replaceAttemptFile('agent-1', 'job-1', 1, 'memory/working.json', '{"a":1}', () => {});
     assert.equal(await workspace.read('workspace', 'agent-1', 'memory/working.json'), '{"a":1}');
     await assert.rejects(() => workspace.read('workspace', 'agent-2', 'memory/working.json'), /Cannot read workspace/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('an atomic attempt-guarded replacement refuses a stale attempt and a lost lease', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'af-worker-fence-'));
+  try {
+    const workspace = new Workspace(join(root, 'artifacts'), join(root, 'sources'));
+    await workspace.replaceAttemptFile('agent-1', 'job-1', 2, 'memory/working.json', '{"attempt":2}', () => {});
+
+    // A newer attempt owns this path; a stale attempt must not clobber it.
+    await assert.rejects(
+      () => workspace.replaceAttemptFile('agent-1', 'job-1', 1, 'memory/working.json', '{"attempt":1}', () => {}),
+      /owned by attempt 2/,
+    );
+    // The lease assertion runs before the replacement, so a lost lease writes nothing.
+    await assert.rejects(
+      () => workspace.replaceAttemptFile('agent-1', 'job-1', 3, 'memory/working.json', '{"attempt":3}', () => { throw new Error('lease lost'); }),
+      /lease lost/,
+    );
+    assert.equal(await workspace.read('workspace', 'agent-1', 'memory/working.json'), '{"attempt":2}');
+    // No partial temp files are ever left behind.
+    assert.deepEqual((await workspace.list('workspace', 'agent-1')).map(file => file.path), ['memory/working.json']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a real sibling agent on the volume is reported and its scope is unreachable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'af-worker-sibling-'));
+  try {
+    const workspace = new Workspace(join(root, 'artifacts'), join(root, 'sources'));
+    await mkdir(join(root, 'sources', 'agent-1'), { recursive: true });
+    await mkdir(join(root, 'sources', 'agent-2'), { recursive: true });
+    await writeFile(join(root, 'sources', 'agent-2', 'brief.md'), 'sibling secret');
+
+    assert.equal(await workspace.otherAgent('agent-1'), 'agent-2', 'the probe must find the real sibling');
+    assert.equal(await workspace.otherAgent('agent-3'), 'agent-1');
+    // Traversal into the sibling's scoped root is refused, so its data is unreachable.
+    await assert.rejects(() => workspace.read('briefs', 'agent-1', '../agent-2/brief.md'), /Unsafe path segment/);
+    await assert.rejects(() => workspace.list('briefs', 'agent-1', '../agent-2'), /Unsafe path segment/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

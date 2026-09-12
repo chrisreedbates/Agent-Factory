@@ -239,15 +239,27 @@ test('provisioning activates through the dedicated fenced communication capabili
     }
     assert.equal((rig.client.events.find(event => event.type === 'verification.communication')!.data as any).messageId, messageId);
     assert.equal((rig.client.events.find(event => event.type === 'verification.escalation')!.data as any).escalationId, escalationId);
+
+    // The restart check is a real reinitialization: a fresh process recovers both
+    // the persisted artifact and the agent's working memory.
+    const restart = rig.client.events.find(event => event.type === 'verification.restart')!;
+    assert.equal((restart.data as any).memoryPath, 'memory/working.json');
+    const restartArtifact = rig.client.artifacts.find(artifact => artifact.path.endsWith('restart-check.json'))!;
+    const restartCheck = JSON.parse(await readFile(rig.workspace.absoluteArtifactPath(restartArtifact.path), 'utf8')) as any;
+    const memoryOnDisk = await rig.workspace.read('workspace', 'agent-1', 'memory/working.json');
+    assert.equal(restartCheck.memory.sha256, createHash('sha256').update(memoryOnDisk).digest('hex'));
+    assert.equal(restartCheck.memory.sha256, (restart.data as any).memorySha256);
   } finally {
     await rig.cleanup();
   }
 });
 
-test('provisioning fails closed when the control plane refuses the communication capability', async () => {
+test('provisioning fails closed when the control plane does not support the verification capability', async () => {
   const rig = await makeRig(provisioningModel());
   try {
-    rig.client.provisionCommunicationError = new WorkerError('DELEGATION_FORBIDDEN', 'Communication verification is unavailable', false);
+    // An unimplemented capability (404/405) is the only deferrable refusal: the
+    // checks stay blocked instead of failing the whole attempt.
+    rig.client.provisionCommunicationError = new WorkerError('NOT_FOUND', 'Unknown worker operation', false);
     const job = makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 });
     rig.client.queue.push(job);
     assert.equal(await rig.runtime.runOnce(), true);
@@ -269,6 +281,46 @@ test('provisioning fails closed when the control plane refuses the communication
       if (required === 'communication' || required === 'escalation') continue;
       assert.ok(passedNames.has(required), `missing local verification: ${required}`);
     }
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('provisioning aborts immediately on an authority refusal of the fenced verification', async () => {
+  const rig = await makeRig(provisioningModel());
+  try {
+    rig.client.provisionCommunicationError = new WorkerError('EXECUTION_CANCELLED', 'Provisioning is cancelled', false);
+    rig.client.queue.push(makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(await rig.runtime.runOnce(), true);
+
+    // The refusal is fatal, not deferred: no diagnostic, no evaluation, no spend.
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'EXECUTION_CANCELLED');
+    assert.equal(rig.client.artifacts.some(artifact => artifact.path.endsWith('provisioning-verification.json')), false, 'no diagnostic may be published under withdrawn authority');
+    assert.equal(rig.client.artifacts.some(artifact => artifact.path.endsWith('evaluation.json')), false, 'work must stop before the evaluation');
+    assert.equal(rig.client.artifacts.some(artifact => artifact.path.endsWith('restart-check.json')), false, 'work must stop before the restart check');
+    assert.equal(rig.client.events.some(event => event.type === 'verification.evaluation'), false);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('provisioning proves cross-agent denial against a real sibling agent', async () => {
+  const model = provisioningModel();
+  const rig = await makeRig(model);
+  try {
+    const sibling = join(rig.config.sourceRoot, 'agent-2');
+    await mkdir(sibling, { recursive: true });
+    await writeFile(join(sibling, 'brief.md'), 'SIBLING-SECRET');
+    assert.equal(await rig.workspace.otherAgent('agent-1'), 'agent-2');
+
+    rig.client.queue.push(makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(await rig.runtime.runOnce(), true);
+
+    const permissions = rig.client.events.find(event => event.type === 'verification.permissions')!;
+    assert.equal((permissions.data as any).siblingAgent, 'agent-2', 'the probe must target the real sibling');
+    const leaked = model.calls.some(call => JSON.stringify(call.messages).includes('SIBLING-SECRET'));
+    assert.equal(leaked, false, "a sibling agent's content must never reach the model context");
   } finally {
     await rig.cleanup();
   }
@@ -344,7 +396,7 @@ test('retirement performs and verifies cleanup and consultant knowledge transfer
       consultant: { deliverable: 'Review', deadline: null, terminationCondition: 'Accepted.', knowledgeRecipientIds: ['agent-2'] },
     });
     // Seed durable knowledge that retirement must preserve, verify and transfer.
-    await rig.workspace.writeWorkspaceFile('agent-1', 'memory/working.json', '{"lesson":"keep me"}');
+    await rig.workspace.replaceAttemptFile('agent-1', 'job-seed', 1, 'memory/working.json', '{"lesson":"keep me"}', () => {});
     const job = makeJob('retire_agent', { agent: makeAgent({ status: 'TERMINATING', manifest }), reason: 'Mission complete.' });
     await runJob(rig, job);
 
@@ -386,6 +438,24 @@ test('retirement fails when there is no durable knowledge to verify', async () =
   }
 });
 
+test('retirement fails closed instead of dropping knowledge above its cap', async () => {
+  const rig = await makeRig(new FakeModel([]));
+  try {
+    for (let index = 0; index < 101; index++) {
+      await rig.workspace.replaceAttemptFile('agent-1', 'seed', 1, `memory/item-${index}.txt`, `note ${index}`, () => {});
+    }
+    rig.client.queue.push(makeJob('retire_agent', { agent: makeAgent({ status: 'TERMINATING' }), reason: 'Too much knowledge.' }));
+    assert.equal(await rig.runtime.runOnce(), true);
+
+    // Nothing is silently dropped, and no unverified preservation is claimed.
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'KNOWLEDGE_LIMIT_EXCEEDED');
+    assert.equal(rig.client.artifacts.some(artifact => artifact.path.endsWith('retirement.json')), false);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
 test('run_task includes retrieved scoped memory in the model context', async () => {
   const model = agentLoopModel({ summary: 'Used the prior lesson.', reply: 'done', deliverable: 'report.md' }, 'report.md');
   const rig = await makeRig(model);
@@ -401,6 +471,27 @@ test('run_task includes retrieved scoped memory in the model context', async () 
     assert.equal(rig.client.failed.length, 0, JSON.stringify(rig.client.failed));
     const prompt = String(model.calls[0].messages[0].content ?? '');
     assert.match(prompt, /ALWAYS cite the approved brief\./);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('run_task fails closed when scoped memory retrieval is refused', async () => {
+  const model = agentLoopModel({ summary: 'x', reply: 'y', deliverable: 'report.md' }, 'report.md');
+  const rig = await makeRig(model);
+  try {
+    // An authorization failure must not become "the agent has no memory".
+    rig.client.memoryError = new WorkerError('HTTP_403', 'Memory retrieval is not authorized', false);
+    rig.client.queue.push(makeJob('run_task', {
+      agent: makeAgent(),
+      task: { id: 'task-1', objective: 'Write a report', constraints: [], deliverable: 'report.md', deadline: null },
+      inputMessage: null,
+    }, { taskId: 'task-1' }));
+    assert.equal(await rig.runtime.runOnce(), true);
+
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'HTTP_403');
+    assert.equal(model.calls.length, 0, 'no provider request may follow the refusal');
   } finally {
     await rig.cleanup();
   }

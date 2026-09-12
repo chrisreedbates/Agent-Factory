@@ -19,9 +19,11 @@ fencing, reservation and evidence-resolution rules, plus a scripted model. The
 tests establish that the worker reserves before execution, settles before
 completion, publishes immutable scoped artifacts, revalidates every model tool
 call against the offered set and current grants, requires a named deliverable
-that verifies on read-back, aborts the attempt when lease renewal is lost, and
-**fails** a job when the configured model is unavailable instead of reporting
-simulated success.
+that verifies on read-back, replaces mutable agent state atomically under an
+attempt fence with the lease asserted around it, aborts the attempt immediately on
+an authority refusal or lost lease renewal, fails closed above the retirement
+knowledge cap, and **fails** a job when the configured model is unavailable or
+when required memory retrieval is refused instead of reporting simulated success.
 
 Those tests are orchestration evidence. They are not proof that a real model, a
 real integration or an operational employee works. The whole-system workflow
@@ -33,12 +35,12 @@ still requires a running API, a real model credential and the integrated console
 | --- | --- | --- |
 | Manifest and organizational position exist | Compiles the proposal into a schema-validated manifest without changing identity, team or manager | A human approval binding the exact compiled version through the live flow |
 | Runtime exists and selected model works | Real model adapter used by compilation, execution and learning; a strict nonce self-check verifies reachability | An actual model call observed through the running worker and control plane |
-| Required tools, authentication and permissions work | Only supported local capabilities are granted; tool observations require a matching grant | Effective permission checks with the live API lease |
-| Memory works | Initializes agent-scoped memory with verbatim read-back; agents write their own episodic memory with provenance | Restart the API and worker and recover the persisted memory |
+| Required tools, authentication and permissions work | Only supported local capabilities are granted; tool observations require a matching grant, and cross-agent reads are refused against a real sibling agent on the volume | Effective permission checks with the live API lease |
+| Memory works | Initializes agent-scoped memory with verbatim read-back under a lease-fenced atomic replacement; a refused retrieval fails the job instead of proceeding with empty context; agents write their own episodic memory with provenance | Restart the API and worker and recover the persisted memory |
 | Communication and escalation work | Replies to the originating message and routes escalation to the approved manager; provisioning exercises the durable paths through the fenced `verify-communication` capability (contract 1.1.0) and fails closed on refusal | A live provisioning run that reaches `ACTIVE` through that capability |
 | Logs and observability exist | Emits scoped, sanitized model, tool and verification events for every attempt | Events rendered from the running control plane |
 | Evaluation passes | Evaluates recorded model output against the manifest criteria | An integrated evaluation recorded for a real task |
-| Persistence survives restart | Writes immutable artifacts and durable workspace knowledge, then re-reads them | Restart the processes and recover the actual files |
+| Persistence survives restart | Writes immutable artifacts and durable workspace knowledge, then a separate process re-initializes the storage layout and recovers both the artifact and the working memory | Restart the processes and recover the actual files |
 | Real end-to-end workflow exercised | Executes delegated tasks, learning and recruitment requests from real agent execution | Four prepared employees plus the live fifth hire and reply |
 
 No seeded ACTIVE employee, fabricated approval, simulated integration or

@@ -84,6 +84,8 @@ export class FakeControlPlane implements ControlPlane {
   memoryEntries: Record<string, any>[] = [];
   rejectForgedCredential = true;
   renewError: Error | null = null;
+  /** Set to fail scoped memory retrieval; the worker must fail closed, not proceed. */
+  memoryError: Error | null = null;
   /** Set to refuse the dedicated provisioning-verification capability (fail-closed coverage). */
   provisionCommunicationError: Error | null = null;
   readonly provisioningCommunications: { messageId: string; escalationId: string }[] = [];
@@ -135,6 +137,7 @@ export class FakeControlPlane implements ControlPlane {
 
   async listMemory(_job: ClaimedJob, limit = 50): Promise<Record<string, any>[]> {
     this.ops.push('listMemory');
+    if (this.memoryError) throw this.memoryError;
     return this.memoryEntries.slice(0, limit);
   }
 

@@ -23,6 +23,14 @@ const PRIVATE_SCOPE: Scope = { visibility: 'private', teamId: null, agentIds: []
 const MAX_TOOL_RESULT_CHARS = 8_000;
 /** Codes that must stop the whole attempt rather than being returned to the model. */
 const FATAL_TOOL_CODES = new Set(['GRANT_REVOKED', 'EXECUTION_CANCELLED']);
+/**
+ * Refusals meaning the control plane does not offer the capability yet. Only these
+ * are deferred to the blocked diagnostic; every authority, lifecycle or transport
+ * refusal aborts the attempt immediately so no further work is performed.
+ */
+const DEFERRABLE_CAPABILITY_CODES = new Set(['NOT_FOUND', 'HTTP_404', 'HTTP_405']);
+/** Retirement preserves the whole knowledge set; above this cap it fails closed. */
+const MAX_RETIREMENT_KNOWLEDGE = 100;
 
 const nowIso = () => new Date().toISOString();
 
@@ -372,10 +380,31 @@ export class JobRunner {
     return 'unknown tool';
   }
 
-  private async childProcessHash(absolutePath: string): Promise<string> {
-    const script = "const fs=require('fs'),c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))";
-    const { stdout } = await execFileAsync(process.execPath, ['-e', script, absolutePath], { timeout: 10_000, windowsHide: true });
-    return stdout.trim();
+  /**
+   * A fresh OS process re-initializes the storage layout from the configured root
+   * and recovers the persisted artifact and working memory. It is handed logical
+   * paths, not resolved absolute paths, so it must re-derive the layout itself
+   * rather than re-reading a file the running attempt already opened.
+   */
+  private async restartRecoveryProbe(input: { agentId: string; deliverablePath: string; memoryPath: string }): Promise<{
+    deliverable: { path: string; sha256: string };
+    memory: { path: string; sha256: string; content: string };
+  }> {
+    const script = [
+      "const fs=require('fs'),path=require('path'),c=require('crypto');",
+      'const [artifactRoot,agentId,deliverable,memory]=process.argv.slice(1);',
+      "const hash=buffer=>c.createHash('sha256').update(buffer).digest('hex');",
+      "const workspace=path.join(artifactRoot,agentId,'workspace');",
+      "const deliverableBytes=fs.readFileSync(path.join(artifactRoot,deliverable));",
+      'const memoryBytes=fs.readFileSync(path.join(workspace,memory));',
+      "process.stdout.write(JSON.stringify({deliverable:{path:deliverable,sha256:hash(deliverableBytes)},memory:{path:memory,sha256:hash(memoryBytes),content:memoryBytes.toString('utf8')}}));",
+    ].join('');
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ['-e', script, this.deps.config.artifactRoot, input.agentId, input.deliverablePath, input.memoryPath],
+      { timeout: 10_000, windowsHide: true },
+    );
+    return JSON.parse(stdout.trim());
   }
 
   /**
@@ -653,21 +682,28 @@ export class JobRunner {
         throw new WorkerError('INVALID_GRANT', `Grant for ${grant.tool} is not a supported local capability`, false);
       }
     }
+    // Cross-agent isolation is proven against a real sibling agent that shares this
+    // volume (never a fabricated missing path). The workspace binds this agent's id,
+    // and the model's tool schema cannot name another agent, so any cross-agent
+    // attempt can only be a traversal, which must be refused.
+    const sibling = await this.deps.workspace.otherAgent(agent.id);
+    const escape = `../${sibling ?? 'unrelated-agent'}`;
     let crossAgentDenied = false;
     try {
-      await this.deps.workspace.list('briefs', `not-${agent.id}`);
-      await this.deps.workspace.read('briefs', `not-${agent.id}`, 'anything.md');
+      await this.deps.workspace.list('briefs', agent.id, escape);
+      await this.deps.workspace.read('briefs', agent.id, `${escape}/brief.md`);
     } catch {
       crossAgentDenied = true;
     }
     if (!crossAgentDenied) throw new WorkerError('SCOPE_BOUNDARY', 'Agent-scoped reads were not confined to the agent', false);
-    const permissionEvent = await this.observe(job, guard, 'verification.permissions', 'Validated grants against the supported allowlist and refused a cross-agent read', { tools: manifest.tools });
+    const permissionEvent = await this.observe(job, guard, 'verification.permissions', 'Validated grants against the supported allowlist and refused a cross-agent read', { tools: manifest.tools, siblingAgent: sibling });
     events.push(permissionEvent);
     pass('permissions', makeEvidence({ eventIds: [permissionEvent], taskId: job.taskId, jobId: job.jobId, summary: `Grants for ${(manifest.tools as string[]).join(', ') || 'no tools'} are supported and cross-agent reads are refused.` }));
 
-    // 6. memory: initialize agent-scoped working memory and verify read-back.
+    // 6. memory: initialize agent-scoped working memory and verify read-back. The
+    // write is fenced and atomic, so a stale attempt cannot interleave shared state.
     const memoryRecord = JSON.stringify({ agentId: agent.id, initializedAt: nowIso() }, null, 2);
-    await this.deps.workspace.writeWorkspaceFile(agent.id, 'memory/working.json', memoryRecord);
+    await this.deps.workspace.replaceAttemptFile(agent.id, job.jobId, job.attempt, 'memory/working.json', memoryRecord, () => guard.assertLive());
     const memoryArtifact = await this.publish(job, guard, 'memory-initialization.json', memoryRecord, 'application/json');
     const memoryReadback = await this.deps.workspace.read('workspace', agent.id, 'memory/working.json');
     if (memoryReadback !== memoryRecord) throw new WorkerError('MEMORY_INTEGRITY', 'Agent working memory did not read back verbatim', false);
@@ -741,6 +777,13 @@ export class JobRunner {
       verificationEscalation = verified.escalation;
     } catch (error) {
       if (error instanceof LeaseLostError) throw error;
+      const code = error instanceof WorkerError ? error.code : 'CONTROL_PLANE_UNAVAILABLE';
+      // A cancelled job, approval drift, an invalid lifecycle or a revoked worker
+      // are authority refusals: abort here, before any further model spend, artifact
+      // publishing or restart work, and do not publish a diagnostic under a lease
+      // the control plane has already withdrawn. Only an unimplemented capability
+      // is deferred to the blocked diagnostic.
+      if (!DEFERRABLE_CAPABILITY_CODES.has(code)) throw error;
       blocked.push({ name: 'communication', error: refusalReason(error) });
       blocked.push({ name: 'escalation', error: refusalReason(error) });
     }
@@ -806,15 +849,26 @@ export class JobRunner {
     artifacts.push(evaluationArtifact.id); events.push(evaluationEvent);
     pass('evaluation', makeEvidence({ artifactIds: [evaluationArtifact.id], eventIds: [evaluationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Every manifest evaluation criterion was applied to persisted evidence and passed.' }));
 
-    // restart: a separate process reads the published bytes and reproduces the hash.
-    const childHash = await this.childProcessHash(deliverableArtifact.absolutePath);
-    if (childHash !== deliverableArtifact.sha256) {
-      throw new WorkerError('RESTART_INTEGRITY', 'A separate process could not reproduce the persisted artifact hash', false);
+    // restart: a separate process re-initializes the storage layout and recovers
+    // both the published artifact and the agent's working memory, so persistence is
+    // proven by a real reinitialization rather than a same-run re-read.
+    const recovery = await this.restartRecoveryProbe({
+      agentId: agent.id,
+      deliverablePath: deliverableArtifact.path,
+      memoryPath: 'memory/working.json',
+    });
+    if (recovery.deliverable.sha256 !== deliverableArtifact.sha256) {
+      throw new WorkerError('RESTART_INTEGRITY', 'A restarted process could not reproduce the persisted artifact hash', false);
     }
-    const restartArtifact = await this.publish(job, guard, 'restart-check.json', JSON.stringify({ path: deliverableArtifact.path, sha256: childHash }, null, 2), 'application/json');
-    const restartEvent = await this.observe(job, guard, 'verification.restart', 'A separate process reproduced the persisted artifact hash', { path: deliverableArtifact.path, sha256: childHash });
+    if (recovery.memory.content !== memoryRecord || recovery.memory.sha256 !== createHash('sha256').update(memoryRecord).digest('hex')) {
+      throw new WorkerError('RESTART_MEMORY', 'A restarted process could not recover the persisted working memory', false);
+    }
+    const restartArtifact = await this.publish(job, guard, 'restart-check.json', JSON.stringify({
+      deliverable: recovery.deliverable, memory: { path: recovery.memory.path, sha256: recovery.memory.sha256 }, recoveredAt: nowIso(),
+    }, null, 2), 'application/json');
+    const restartEvent = await this.observe(job, guard, 'verification.restart', 'A restarted process re-initialized the workspace and recovered the persisted artifact and working memory', { path: deliverableArtifact.path, sha256: recovery.deliverable.sha256, memoryPath: recovery.memory.path, memorySha256: recovery.memory.sha256 });
     artifacts.push(restartArtifact.id); events.push(restartEvent);
-    pass('restart', makeEvidence({ artifactIds: [restartArtifact.id], eventIds: [restartEvent], taskId: job.taskId, jobId: job.jobId, summary: 'A separate process re-read the persisted artifact and reproduced its SHA-256.' }));
+    pass('restart', makeEvidence({ artifactIds: [restartArtifact.id], eventIds: [restartEvent], taskId: job.taskId, jobId: job.jobId, summary: 'A separate process re-initialized the workspace and recovered both the persisted artifact and the working memory with matching SHA-256 hashes.' }));
 
     // Fail closed: the current core contract refuses delegated provisioning
     // verification, so activation must not be reported. The diagnostic records
@@ -883,7 +937,11 @@ export class JobRunner {
     const offered = this.offeredTools(manifest, true);
     await ledger.reserve(1 + this.deps.config.maxToolRounds);
     // Retrieve scoped memory so an earlier evidence-backed lesson can shape this task.
-    const memory = await this.deps.client.listMemory(job, 50).catch(() => []);
+    // A lease, authorization or control-plane failure must fail the job: silently
+    // treating it as "no memory" would work on with authority already gone and could
+    // complete without the required learned context. The API's empty list is the
+    // only representation of "no records".
+    const memory = await this.deps.client.listMemory(job, 50);
     const loop = await this.agentToolLoop({
       job, ledger, guard, agent, manifest, offered,
       system: this.taskSystemPrompt(manifest),
@@ -1123,9 +1181,9 @@ export class JobRunner {
       throw new WorkerError('CREDENTIALS_UNREVOKED', 'External credentials must be revoked before an agent can be retired', false);
     }
 
-    // knowledgePreserved: gather durable knowledge and read every item back.
-    const workspaceFiles = await this.deps.workspace.list('workspace', agent.id).catch(() => []);
-    const outputFiles = await this.deps.workspace.list('output', agent.id).catch(() => []);
+    // knowledgePreserved: enumerate the complete durable set, then verify every item.
+    const workspaceFiles = await this.deps.workspace.list('workspace', agent.id);
+    const outputFiles = await this.deps.workspace.list('output', agent.id);
     const knowledge: { root: 'workspace' | 'output'; path: string }[] = [
       ...workspaceFiles.map(file => ({ root: 'workspace' as const, path: file.path })),
       ...outputFiles.map(file => ({ root: 'output' as const, path: file.path })),
@@ -1133,9 +1191,14 @@ export class JobRunner {
     if (!knowledge.length) {
       throw new WorkerError('KNOWLEDGE_MISSING', 'No durable knowledge was found to preserve, so retirement cannot be verified', false);
     }
+    // Retirement must not silently drop unverified knowledge: either every item is
+    // preserved and verified, or the job fails closed above the supported cap.
+    if (knowledge.length > MAX_RETIREMENT_KNOWLEDGE) {
+      throw new WorkerError('KNOWLEDGE_LIMIT_EXCEEDED', `Retirement preserves and verifies at most ${MAX_RETIREMENT_KNOWLEDGE} knowledge files but found ${knowledge.length}; archive the workspace before retiring so nothing is dropped unverified`, false);
+    }
     let preservedBytes = 0;
     const preserved: { root: 'workspace' | 'output'; path: string; content: string; sha256: string }[] = [];
-    for (const file of knowledge.slice(0, 100)) {
+    for (const file of knowledge) {
       const content = await this.deps.workspace.read(file.root, agent.id, file.path).catch(() => null);
       if (content === null) throw new WorkerError('KNOWLEDGE_UNREADABLE', `Preserved knowledge ${file.path} could not be read back`, false);
       preservedBytes += Buffer.byteLength(content);
@@ -1144,7 +1207,7 @@ export class JobRunner {
 
     // runtimeDisabled: write and read back a retirement marker in the agent workspace.
     const marker = JSON.stringify({ agentId: agent.id, disabledAt: nowIso(), reason }, null, 2);
-    await this.deps.workspace.writeWorkspaceFile(agent.id, 'runtime-disabled.json', marker);
+    await this.deps.workspace.replaceAttemptFile(agent.id, job.jobId, job.attempt, 'runtime-disabled.json', marker, () => guard.assertLive());
     const markerBack = await this.deps.workspace.read('workspace', agent.id, 'runtime-disabled.json');
     if (markerBack !== marker) throw new WorkerError('RUNTIME_DISABLE_FAILED', 'The runtime retirement marker did not verify on read-back', false);
 
@@ -1161,7 +1224,7 @@ export class JobRunner {
         const leaf = item.path.split('/').pop() ?? 'knowledge.txt';
         const name = `${String(position + 1).padStart(3, '0')}-${leaf}`;
         const target = `consultant-transfer/${agent.id}/knowledge/${name}`;
-        await this.deps.workspace.writeWorkspaceFile(recipient, target, item.content);
+        await this.deps.workspace.replaceAttemptFile(recipient, job.jobId, job.attempt, target, item.content, () => guard.assertLive());
         // Retrieval is verified as the recipient: read the recipient's own copy back.
         const back = await this.deps.workspace.read('workspace', recipient, target);
         if (back !== item.content || createHash('sha256').update(back).digest('hex') !== item.sha256) {
@@ -1173,7 +1236,7 @@ export class JobRunner {
       }
       const indexName = `consultant-transfer/${agent.id}/index.json`;
       const index = JSON.stringify({ from: agent.id, reason, retiredAt: nowIso(), scope: 'private', knowledge: manifestEntries }, null, 2);
-      await this.deps.workspace.writeWorkspaceFile(recipient, indexName, index);
+      await this.deps.workspace.replaceAttemptFile(recipient, job.jobId, job.attempt, indexName, index, () => guard.assertLive());
       const indexBack = await this.deps.workspace.read('workspace', recipient, indexName);
       if (indexBack !== index) throw new WorkerError('TRANSFER_FAILED', `Knowledge transfer index did not verify in ${recipient}'s workspace`, false);
       transferred.push(recipient);
@@ -1185,9 +1248,9 @@ export class JobRunner {
       preservedBytes, transferredTo: transferred, transferredBytes,
     }, null, 2), 'application/json');
     const event = await this.observe(job, guard, 'retirement.cleanup', 'Disabled the runtime, verified preserved knowledge and transferred consultant knowledge', {
-      reason, credentials: 0, preservedFiles: knowledge.length, preservedBytes, transferredTo: transferred, transferredBytes, runtime: this.deps.config.modelName,
+      reason, credentials: 0, preservedFiles: preserved.length, preservedBytes, transferredTo: transferred, transferredBytes, runtime: this.deps.config.modelName,
     });
-    const evidence = makeEvidence({ artifactIds: [record.id], eventIds: [event], taskId: job.taskId, jobId: job.jobId, summary: `Retired ${agent.id}: verified ${knowledge.length} knowledge file(s) and disabled the runtime.` });
+    const evidence = makeEvidence({ artifactIds: [record.id], eventIds: [event], taskId: job.taskId, jobId: job.jobId, summary: `Retired ${agent.id}: verified ${preserved.length} knowledge file(s) and disabled the runtime.` });
     await ledger.settle();
     guard.assertLive();
     await this.deps.client.complete(job, {
@@ -1196,7 +1259,8 @@ export class JobRunner {
       // This deployment holds no external credentials, so there are none to revoke.
       credentialsRevoked: true,
       runtimeDisabled: true,
-      knowledgePreserved: true,
+      // Reported from the verified set, never from the enumeration alone.
+      knowledgePreserved: preserved.length === knowledge.length && preserved.length > 0,
       // The control plane cancels work and refuses to enqueue retirement while active tasks remain.
       activeTasksResolved: true,
     });
