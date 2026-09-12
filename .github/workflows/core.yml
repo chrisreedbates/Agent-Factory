@@ -3,6 +3,19 @@ on: [push, pull_request]
 jobs:
   core:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U factory"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -12,3 +25,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:core
       - run: pnpm test:core
+      - name: PostgreSQL 17 API integration
+        run: pnpm --filter @agent-factory/api test:postgres
+        env:
+          TEST_DATABASE_URL: postgres://factory:factory@localhost:5432/factory
