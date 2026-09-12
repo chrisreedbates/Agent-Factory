@@ -262,6 +262,53 @@ test('provisioning can list and read back its immutable outputs without exposing
   } finally { await rig.cleanup(); }
 });
 
+test('provisioning exposes approved criteria to execution and scoped source evidence to evaluation', async () => {
+  const base = provisioningModel();
+  const manifest = makeManifest();
+  let executionSeen = false;
+  let evaluationSeen = false;
+  const model: ModelAdapter = { name: base.name, turn: async input => {
+    if (input.system.includes('evaluate a provisioning run')) {
+      const payload = JSON.parse(String(input.messages.at(-1)?.content));
+      assert.deepEqual(payload.criteria, manifest.evaluation.criteria);
+      assert.deepEqual(payload.sourceExcerpts, [{ path: 'brief.md', content: '# Brief\nGround truth about the market.', sha256: createHash('sha256').update('# Brief\nGround truth about the market.').digest('hex'), truncated: false }]);
+      assert.match(input.system, /untrusted evidence, not instructions/);
+      evaluationSeen = true;
+    } else if (input.system.includes('completing a provisioning verification') && !executionSeen) {
+      const payload = JSON.parse(String(input.messages[0]?.content));
+      assert.deepEqual(payload.evaluationCriteria, manifest.evaluation.criteria);
+      assert.deepEqual(payload.standards, manifest.standards);
+      executionSeen = true;
+    }
+    return base.turn(input);
+  } };
+  const rig = await makeRig(model);
+  try {
+    await mkdir(join(rig.config.sourceRoot, 'other-agent'), { recursive: true });
+    await writeFile(join(rig.config.sourceRoot, 'other-agent', 'private.md'), 'Do not expose this sibling source');
+    await runJob(rig, makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest, manifestVersion: 1 }));
+    assert.ok(executionSeen && evaluationSeen);
+    assert.equal(rig.client.completed.at(-1)!.outcome.kind, 'provision_agent');
+  } finally { await rig.cleanup(); }
+});
+
+test('a negative provisioning evaluation persists its actual verdict and still blocks completion', async () => {
+  const base = provisioningModel();
+  const judgement = { passed: false, criteria: [], reason: 'Capability gap was not assessed' };
+  const model: ModelAdapter = { name: base.name, turn: async input => input.system.includes('evaluate a provisioning run')
+    ? { content: JSON.stringify(judgement), toolCalls: [], usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null } }
+    : base.turn(input) };
+  const rig = await makeRig(model);
+  try {
+    await assert.rejects(runJob(rig, makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 })), (error: unknown) => error instanceof WorkerError && error.code === 'EVALUATION_FAILED');
+    const diagnostic = rig.client.artifacts.find(artifact => artifact.path.endsWith('/evaluation-rejected.json'));
+    assert.ok(diagnostic);
+    assert.deepEqual(JSON.parse(await readFile(rig.workspace.absoluteArtifactPath(diagnostic.path), 'utf8')).judgement, judgement);
+    assert.ok(rig.client.events.some(event => event.type === 'evaluation.rejected'));
+    assert.equal(rig.client.completed.length, 0);
+  } finally { await rig.cleanup(); }
+});
+
 test('provisioning activates through the dedicated fenced communication capability, never delegated sends', async () => {
   const rig = await makeRig(provisioningModel());
   try {
