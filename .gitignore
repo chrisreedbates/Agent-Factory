@@ -5,3 +5,10 @@ data/
 node_modules/
 dist/
 .pnpm-store/
+.env
+.env.*
+!.env.example
+coverage/
+artifacts/
+.sources/
+*.tsbuildinfo
