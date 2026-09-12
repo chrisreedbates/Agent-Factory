@@ -1,0 +1,28 @@
+# docker compose -f compose.yaml -f compose.full.yaml up -d --build
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:3000
+      ARTIFACT_ROOT: /workspaces
+      SOURCE_ROOT: /sources
+    volumes:
+      - workspaces:/workspaces:rw
+      - ./.sources:/sources:ro
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      API_ORIGIN: http://api:3000
+    ports: ["127.0.0.1:8080:80"]
+    depends_on:
+      api:
+        condition: service_started

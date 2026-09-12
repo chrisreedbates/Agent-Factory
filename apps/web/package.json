@@ -6,8 +6,11 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --import tsx --test src/*.test.ts",
+    "test:e2e:contract": "node --test ../../tests/e2e/operator-console-contract.test.mjs",
+    "verify:smoke": "node ../../tests/e2e/operator-console-smoke.mjs",
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@agent-factory/contracts": "workspace:*",

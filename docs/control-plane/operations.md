@@ -60,7 +60,7 @@ Machine 2 must replace its provisioning calls to ordinary `/v1/messages` and `/v
 
 ## Combined local deployment
 
-Use `docker compose -f compose.yaml -f compose.full.yaml up -d --build` from the repository root. Set distinct random operator/worker tokens, a real `OPENAI_API_KEY`, `MODEL_NAME`, and `PUBLIC_ORIGIN=http://localhost:8080` in the ignored `.env` before startup. Open `http://localhost:8080`; nginx proxies `/v1` to the API on the same origin. PostgreSQL persists in the Compose volume, the API mounts the shared agent workspace read-only, and the worker mounts it read/write with `sources/` mounted read-only. Source briefs contain input facts only, never employees, approvals or verification outcomes.
+Use `docker compose -f compose.yaml -f compose.full.yaml up -d --build` from the repository root. Set distinct random operator/worker tokens, a real `OPENAI_API_KEY`, `MODEL_NAME`, and `PUBLIC_ORIGIN=http://localhost:8080` in the ignored `.env` before startup. Open `http://localhost:8080`; nginx proxies `/v1` to the API on the same origin. PostgreSQL persists in the Compose volume, the API mounts the shared agent workspace read-only, and the worker mounts it read/write with staged `.sources/` mounted read-only (reviewed templates remain in `sources/`). Source briefs contain input facts only, never employees, approvals or verification outcomes.
 
 The supported `send_message` tool has only the `send` operation. The runtime revalidates its current grant and uses the authenticated `/v1/messages` operation; the API still enforces communication scope and derives sender identity. An actionable message schedules durable work and a correlated reply. It cannot approve a hire or expand permissions.
 
