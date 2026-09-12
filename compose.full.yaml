@@ -11,7 +11,7 @@ services:
       SOURCE_ROOT: /sources
     volumes:
       - workspaces:/workspaces:rw
-      - ./sources:/sources:ro
+      - ./.sources:/sources:ro
     depends_on:
       api:
         condition: service_started
