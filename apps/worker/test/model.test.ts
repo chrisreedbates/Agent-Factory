@@ -34,7 +34,7 @@ test('provider adapter preserves finite nonnegative cost and leaves unknown or i
 test('provider adapter reports in-band upstream failures as retryable call failures', async () => {
   const adapter = new OpenAiAdapter({ apiKey: null, baseURL: null, model: 'test-model' });
   Object.assign(adapter, { client: { chat: { completions: { create: async () => ({
-    error: { message: 'Upstream error from Nvidia: Service temporarily overloaded' },
+    error: { code: 503, message: 'Upstream error from Nvidia: Service temporarily overloaded' },
   }) } } } });
   await assert.rejects(adapter.turn({ system: 'Test', messages: [] }), error => {
     assert.ok(error instanceof WorkerError);

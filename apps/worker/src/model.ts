@@ -18,6 +18,46 @@ export function addUsage(total: ModelUsage, turn: ModelUsage): ModelUsage {
   };
 }
 
+/** A provider attempt failed after dispatch; retain billable usage for settlement. */
+export class ModelCallError extends WorkerError {
+  constructor(message: string, retryable: boolean, public readonly usage: ModelUsage) {
+    super('MODEL_CALL_FAILED', message, retryable);
+  }
+}
+
+function reportedUsage(value: any): ModelUsage {
+  const tokens = (count: unknown): number | null =>
+    typeof count === 'number' && Number.isFinite(count) && Number.isInteger(count) && count >= 0 ? count : null;
+  return {
+    modelCalls: 1,
+    inputTokens: tokens(value?.prompt_tokens),
+    outputTokens: tokens(value?.completion_tokens),
+    cost: typeof value?.cost === 'number' && Number.isFinite(value.cost) && value.cost >= 0 ? value.cost : null,
+  };
+}
+
+/** Structured provider codes take precedence over generic transport statuses. */
+function transientProviderFailure(value: any): boolean {
+  const nested = value?.error;
+  const codes = [value?.code, value?.type, nested?.code, nested?.type]
+    .filter((code): code is string => typeof code === 'string').map(code => code.toLowerCase());
+  const permanent = new Set(['invalid_api_key', 'authentication_error', 'permission_denied', 'permission_error',
+    'model_not_found', 'invalid_model', 'invalid_request_error', 'invalid_request', 'insufficient_quota',
+    'insufficient_credits', 'billing_error', 'configuration_error', 'unsupported_model']);
+  if (codes.some(code => permanent.has(code))) return false;
+  const statusValue = value?.status ?? value?.status_code ?? nested?.status ?? nested?.status_code
+    ?? (typeof value?.code === 'number' || (typeof value?.code === 'string' && /^\d{3}$/.test(value.code)) ? value.code : undefined)
+    ?? (typeof nested?.code === 'number' || (typeof nested?.code === 'string' && /^\d{3}$/.test(nested.code)) ? nested.code : undefined);
+  const status = typeof statusValue === 'string' && /^\d{3}$/.test(statusValue) ? Number(statusValue) : statusValue;
+  if (typeof status === 'number' && status >= 400 && status < 500 && ![408, 409, 429].includes(status)) return false;
+  const transient = new Set(['rate_limit_exceeded', 'rate_limit_error', 'overloaded_error', 'server_error',
+    'internal_server_error', 'service_unavailable', 'temporarily_unavailable', 'timeout', 'request_timeout',
+    'etimedout', 'econnreset', 'econnrefused', 'eai_again', 'enetunreach', 'epipe']);
+  return [408, 409, 429].includes(status) || (status >= 500 && status < 600)
+    || codes.some(code => transient.has(code))
+    || ['APIConnectionError', 'APIConnectionTimeoutError'].includes(value?.name);
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -84,7 +124,7 @@ export class OpenAiAdapter implements ModelAdapter {
     }
     const imported = await import('openai');
     const OpenAI = (imported as any).default ?? imported;
-    this.client = new OpenAI({ apiKey: this.config.apiKey, ...(this.config.baseURL ? { baseURL: this.config.baseURL } : {}) });
+    this.client = new OpenAI({ maxRetries: 0, apiKey: this.config.apiKey, ...(this.config.baseURL ? { baseURL: this.config.baseURL } : {}) });
     return this.client;
   }
 
@@ -118,19 +158,19 @@ export class OpenAiAdapter implements ModelAdapter {
     } catch (error) {
       // Cancel local work on lease loss; provider-side processing and billing may continue.
       if (input.signal?.aborted) throw new LeaseLostError(409, 'The model request was cancelled because the job lease was lost');
-      const status = (error as any)?.status;
-      throw new WorkerError('MODEL_CALL_FAILED', `Model call failed: ${(error as Error).message}`, status === 429 || status >= 500);
+      throw new ModelCallError(`Model call failed: ${(error as Error).message}`, transientProviderFailure(error),
+        reportedUsage((error as any)?.usage ?? (error as any)?.error?.usage));
     }
-    // Some compatible providers report upstream failures inside an HTTP 200
-    // response. Keep these retryable instead of treating them as model output.
+    // Compatible providers can return permanent or transient errors inside HTTP 200.
+    const usage = reportedUsage(response?.usage ?? response?.error?.usage);
     if (response?.error) {
       const detail = typeof response.error.message === 'string'
         ? response.error.message.slice(0, 500)
         : 'The provider returned an error response';
-      throw new WorkerError('MODEL_CALL_FAILED', `Model call failed: ${detail}`, true);
+      throw new ModelCallError(`Model call failed: ${detail}`, transientProviderFailure(response), usage);
     }
     if (!Array.isArray(response?.choices) || !isRecord(response.choices[0]?.message)) {
-      throw new WorkerError('MODEL_CALL_FAILED', 'Model call failed: the provider response contained no valid message choice', true);
+      throw new ModelCallError('Model call failed: the provider response contained no valid message choice', true, usage);
     }
     const choice = response.choices[0].message;
     const rawCalls = Array.isArray(choice.tool_calls) ? choice.tool_calls : [];
@@ -146,15 +186,7 @@ export class OpenAiAdapter implements ModelAdapter {
     return {
       content: typeof choice.content === 'string' ? choice.content : null,
       toolCalls,
-      usage: {
-        modelCalls: 1,
-        inputTokens: typeof response?.usage?.prompt_tokens === 'number' ? response.usage.prompt_tokens : null,
-        outputTokens: typeof response?.usage?.completion_tokens === 'number' ? response.usage.completion_tokens : null,
-        // Preserve reported cost, including free calls; never infer unknown pricing.
-        cost: typeof response?.usage?.cost === 'number' && Number.isFinite(response.usage.cost) && response.usage.cost >= 0
-          ? response.usage.cost
-          : null,
-      },
+      usage,
     };
   }
 }

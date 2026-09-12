@@ -72,7 +72,7 @@ export class FakeControlPlane implements ControlPlane {
   readonly messages: Record<string, any>[] = [];
   readonly escalations: Record<string, any>[] = [];
   readonly completed: { job: ClaimedJob; outcome: JobOutcome; order: number }[] = [];
-  readonly failed: { job: ClaimedJob; code: string; message: string; retryable: boolean; order: number }[] = [];
+  readonly failed: { job: ClaimedJob; code: string; message: string; retryable: boolean; evidence: Evidence | null; order: number }[] = [];
   readonly ops: string[] = [];
   /** Live grants a run_task/learn attempt observes through getAgent. */
   grants: Grant[] = [
@@ -200,7 +200,7 @@ export class FakeControlPlane implements ControlPlane {
   async fail(job: ClaimedJob, input: { code: string; message: string; retryable: boolean; evidence: Evidence | null }): Promise<{ jobId: string; status: string; duplicate: boolean }> {
     this.ops.push('failJob');
     if (input.evidence) this.assertEvidence(job, input.evidence);
-    this.failed.push({ job, code: input.code, message: input.message, retryable: input.retryable, order: this.ops.length });
+    this.failed.push({ job, code: input.code, message: input.message, retryable: input.retryable, evidence: input.evidence, order: this.ops.length });
     return { jobId: job.jobId, status: input.retryable ? 'QUEUED' : 'FAILED', duplicate: false };
   }
 

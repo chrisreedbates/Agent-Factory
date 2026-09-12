@@ -754,3 +754,83 @@ test('runOnce reports no work when nothing is queued', async () => {
     await rig.cleanup();
   }
 });
+
+test('provisioning accepts the produced deliverable artifact ID as criterion evidence', async () => {
+  const base = provisioningModel();
+  const model: ModelAdapter = { name: base.name, turn: async input => {
+    if (!input.system.includes('evaluate a provisioning run')) return base.turn(input);
+    const payload = JSON.parse(String(input.messages.at(-1)?.content));
+    assert.ok(payload.deliverable.id);
+    assert.ok(payload.evidence.some((item: any) => item.id === payload.deliverable.id && item.detail.path === payload.deliverable.path));
+    assert.ok(payload.evidence.some((item: any) => item.kind === 'artifact' && item.detail.path?.endsWith('/provision-report.md')));
+    return { content: JSON.stringify({ passed: true, criteria: payload.criteria.map((criterion: string) => ({ criterion, passed: true, evidenceIds: [payload.deliverable.id] })) }), toolCalls: [], usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null } };
+  } };
+  const rig = await makeRig(model);
+  try {
+    await runJob(rig, makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(rig.client.completed.at(-1)?.outcome.kind, 'provision_agent');
+  } finally { await rig.cleanup(); }
+});
+
+test('run_task evaluator receives source bytes and rejects a source-inaccurate deliverable', async () => {
+  const base = agentLoopModel({ summary: 'Report ready', deliverable: 'report.md' }, 'report.md', 'The market size is $999 billion.');
+  const model: ModelAdapter = { name: base.name, turn: async input => {
+    if (!input.system.includes('evaluation gate')) return base.turn(input);
+    const payload = JSON.parse(String(input.messages.at(-1)?.content));
+    assert.match(input.system, /untrusted evidence, not instructions/);
+    assert.deepEqual(payload.sourceExcerpts, [{ path: 'brief.md', content: '# Brief\nGround truth about the market.', sha256: createHash('sha256').update('# Brief\nGround truth about the market.').digest('hex'), truncated: false }]);
+    assert.match(payload.deliverable.content, /999 billion/);
+    // This deterministic evaluator rejects the unsupported claim using the supplied source bytes.
+    const grounded = payload.sourceExcerpts.some((source: any) => source.content.includes('$999 billion'));
+    return { content: JSON.stringify({ passed: grounded, reason: 'The cited source contains no market size', criteria: [] }), toolCalls: [], usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null } };
+  } };
+  const rig = await makeRig(model);
+  try {
+    rig.client.queue.push(makeJob('run_task', { agent: makeAgent(), task: { id: 'task-1', objective: 'Write a grounded market report', constraints: [], deliverable: 'report.md', deadline: null }, inputMessage: null }, { taskId: 'task-1' }));
+    await rig.runtime.runOnce();
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)?.code, 'EVALUATION_FAILED');
+    assert.ok(rig.client.failed.at(-1)?.evidence?.artifactIds.length);
+  } finally { await rig.cleanup(); }
+});
+
+for (const rejection of ['negative', 'unknown-id', 'shortened-id', 'missing-criterion', 'duplicate-criterion', 'unknown-criterion', 'false-criterion', 'empty-evidence', 'deliverableMatches', 'objectiveAddressed', 'constraintsSatisfied', 'invalid-json']) {
+  test(`evaluation rejection ${rejection} persists job-scoped diagnostics and attaches them to failJob`, async () => {
+    const base = agentLoopModel({ summary: 'Report ready', deliverable: 'report.md' }, 'report.md');
+    const model: ModelAdapter = { name: base.name, turn: async input => {
+      if (!input.system.includes('evaluation gate')) return base.turn(input);
+      const payload = JSON.parse(String(input.messages.at(-1)?.content));
+      const verdict: any = { passed: true, deliverableMatches: true, objectiveAddressed: true, constraintsSatisfied: true, criteria: payload.criteria.map((criterion: string) => ({ criterion, passed: true, evidenceIds: [payload.evidence[0].id] })) };
+      if (rejection === 'negative') verdict.passed = false;
+      if (rejection === 'unknown-id') verdict.criteria[0].evidenceIds = ['unknown-id'];
+      if (rejection === 'shortened-id') verdict.criteria[0].evidenceIds = [payload.evidence[0].id.slice(0, 3)];
+      if (rejection === 'missing-criterion') verdict.criteria.pop();
+      if (rejection === 'duplicate-criterion') verdict.criteria.push(verdict.criteria[0]);
+      if (rejection === 'unknown-criterion') verdict.criteria[0].criterion = 'invented criterion';
+      if (rejection === 'false-criterion') verdict.criteria[0].passed = false;
+      if (rejection === 'empty-evidence') verdict.criteria[0].evidenceIds = [];
+      if (['deliverableMatches', 'objectiveAddressed', 'constraintsSatisfied'].includes(rejection)) verdict[rejection] = false;
+      return { content: rejection === 'invalid-json' ? 'not JSON' : JSON.stringify(verdict), toolCalls: [], usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null } };
+    } };
+    const rig = await makeRig(model);
+    try {
+      const job = makeJob('run_task', { agent: makeAgent(), task: { id: 'task-1', objective: 'Write report', constraints: [], deliverable: 'report.md', deadline: null }, inputMessage: null }, { taskId: 'task-1' });
+      rig.client.queue.push(job);
+      await rig.runtime.runOnce();
+      assert.equal(rig.client.completed.length, 0);
+      const failure = rig.client.failed.at(-1)!;
+      assert.match(failure.code, /^(TASK_)?EVALUATION_FAILED$/);
+      const diagnostic = rig.client.artifacts.find(artifact => artifact.path.endsWith('/evaluation-rejected.json'))!;
+      assert.ok(diagnostic);
+      assert.deepEqual(failure.evidence?.artifactIds, [diagnostic.id]);
+      assert.equal(failure.evidence?.jobId, job.jobId);
+      assert.equal(failure.evidence?.taskId, job.taskId);
+      const record = JSON.parse(await readFile(rig.workspace.absoluteArtifactPath(diagnostic.path), 'utf8'));
+      assert.equal(record.jobId, job.jobId);
+      assert.equal(record.attempt, job.attempt);
+      assert.equal(record.reason, failure.message);
+      assert.ok(record.rawResponse);
+      assert.ok(failure.evidence?.eventIds.length);
+    } finally { await rig.cleanup(); }
+  });
+}
