@@ -1,5 +1,5 @@
 {
-  "contractVersion": "1.0.0",
+  "contractVersion": "1.1.0",
   "notice": "Synthetic contract examples; not evidence of operational employees or completed real verification.",
   "routes": [
     {
@@ -2994,6 +2994,71 @@
       "response": {
         "data": {
           "leaseExpiresAt": "2026-09-12T10:02:00.000Z"
+        }
+      }
+    },
+    {
+      "operationId": "verifyProvisionCommunication",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/verify-communication",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-verifyProvisionCommunication"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "message": {
+            "id": "message-provision-verification",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "recipientId": "human-ceo",
+            "recipientKind": "human",
+            "content": "Provisioning communication verification.",
+            "actionable": false,
+            "inReplyTo": null,
+            "taskId": null,
+            "sender": {
+              "id": "agent-research",
+              "kind": "agent",
+              "organizationId": "org-demo"
+            },
+            "inputJobId": null,
+            "deliveryStatus": "queued",
+            "blockedReason": null
+          },
+          "escalation": {
+            "id": "escalation-provision-verification",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "taskId": null,
+            "severity": "low",
+            "category": "provisioning_verification",
+            "situation": "Provisioning escalation verification.",
+            "attemptedActions": [
+              "Checked the approved source directory."
+            ],
+            "reason": "The source is required to verify a claim.",
+            "recommendation": "Provide the source before continuing.",
+            "requestedFrom": "human-ceo",
+            "status": "OPEN",
+            "resolution": null,
+            "resolvedBy": null,
+            "followUpTaskId": null
+          }
         }
       }
     },

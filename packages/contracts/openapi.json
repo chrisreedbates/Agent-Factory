@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Agent Factory Control Plane",
-    "version": "1.0.1"
+    "version": "1.1.0"
   },
   "paths": {
     "/v1/session": {
@@ -36781,6 +36781,833 @@
                       },
                       "required": [
                         "leaseExpiresAt"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "message": {
+                          "minLength": 1,
+                          "maxLength": 20000,
+                          "type": "string"
+                        },
+                        "retryable": {
+                          "type": "boolean"
+                        },
+                        "correlationId": {
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "pattern": "^[A-Za-z0-9_-]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message",
+                        "retryable",
+                        "correlationId"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/worker/jobs/{id}/verify-communication": {
+      "post": {
+        "operationId": "verifyProvisionCommunication",
+        "security": [
+          {
+            "workerBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "maxLength": 200,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "type": "object",
+                "properties": {
+                  "leaseToken": {
+                    "minLength": 1,
+                    "maxLength": 20000,
+                    "type": "string"
+                  },
+                  "attempt": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "leaseToken",
+                  "attempt"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "organizationId": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "version": {
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "createdAt": {
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$",
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$",
+                              "type": "string"
+                            },
+                            "sender": {
+                              "additionalProperties": false,
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "anyOf": [
+                                    {
+                                      "const": "human",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "worker",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "agent",
+                                      "type": "string"
+                                    },
+                                    {
+                                      "const": "factory",
+                                      "type": "string"
+                                    }
+                                  ]
+                                },
+                                "organizationId": {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "kind",
+                                "organizationId"
+                              ]
+                            },
+                            "recipientId": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "recipientKind": {
+                              "anyOf": [
+                                {
+                                  "const": "human",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "agent",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "content": {
+                              "minLength": 1,
+                              "maxLength": 20000,
+                              "type": "string"
+                            },
+                            "actionable": {
+                              "type": "boolean"
+                            },
+                            "inReplyTo": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "taskId": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "inputJobId": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "deliveryStatus": {
+                              "anyOf": [
+                                {
+                                  "const": "queued",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "consumed",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "replied",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "failed",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "blocked",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "blockedReason": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 20000,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "organizationId",
+                            "version",
+                            "createdAt",
+                            "updatedAt",
+                            "sender",
+                            "recipientId",
+                            "recipientKind",
+                            "content",
+                            "actionable",
+                            "inReplyTo",
+                            "taskId",
+                            "inputJobId",
+                            "deliveryStatus",
+                            "blockedReason"
+                          ]
+                        },
+                        "escalation": {
+                          "additionalProperties": false,
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "organizationId": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "version": {
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            "createdAt": {
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$",
+                              "type": "string"
+                            },
+                            "updatedAt": {
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$",
+                              "type": "string"
+                            },
+                            "agentId": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "taskId": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "severity": {
+                              "anyOf": [
+                                {
+                                  "const": "low",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "medium",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "high",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "critical",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "category": {
+                              "minLength": 1,
+                              "maxLength": 20000,
+                              "type": "string"
+                            },
+                            "situation": {
+                              "minLength": 1,
+                              "maxLength": 20000,
+                              "type": "string"
+                            },
+                            "attemptedActions": {
+                              "maxItems": 100,
+                              "type": "array",
+                              "items": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "reason": {
+                              "minLength": 1,
+                              "maxLength": 20000,
+                              "type": "string"
+                            },
+                            "recommendation": {
+                              "minLength": 1,
+                              "maxLength": 20000,
+                              "type": "string"
+                            },
+                            "requestedFrom": {
+                              "minLength": 1,
+                              "maxLength": 200,
+                              "pattern": "^[A-Za-z0-9_-]+$",
+                              "type": "string"
+                            },
+                            "status": {
+                              "anyOf": [
+                                {
+                                  "const": "OPEN",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "RESOLVED",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "resolution": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 20000,
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "resolvedBy": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "followUpTaskId": {
+                              "anyOf": [
+                                {
+                                  "minLength": 1,
+                                  "maxLength": 200,
+                                  "pattern": "^[A-Za-z0-9_-]+$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "organizationId",
+                            "version",
+                            "createdAt",
+                            "updatedAt",
+                            "agentId",
+                            "taskId",
+                            "severity",
+                            "category",
+                            "situation",
+                            "attemptedActions",
+                            "reason",
+                            "recommendation",
+                            "requestedFrom",
+                            "status",
+                            "resolution",
+                            "resolvedBy",
+                            "followUpTaskId"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "escalation"
                       ]
                     }
                   },

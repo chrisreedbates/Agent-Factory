@@ -98,6 +98,7 @@ export function buildApp(config:AppConfig) {
           const cached=cacheId?await s.maybe('idempotency_keys',cacheId):null;
           if(cached) {
             if(cached.fingerprint!==fingerprint)deny('IDEMPOTENCY_CONFLICT','Idempotency key was already used for different input',409);
+            if(op==='verifyProvisionCommunication')await new WorkerService(s,{artifactRoot:config.artifactRoot,workerPrincipalId:workerId}).provisioningCommunicationContext(id,body,actor);
             if(route.auth==='worker') {
               const job=await s.get('jobs',id);
               const sameOwner=job.workerPrincipalId===actor.id&&job.attempt===body.attempt&&job.leaseToken===body.leaseToken;

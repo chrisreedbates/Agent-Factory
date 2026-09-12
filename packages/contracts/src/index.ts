@@ -1,6 +1,6 @@
 import { Value } from '@sinclair/typebox/value';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
-export const CONTRACT_VERSION = '1.0.1';
+export const CONTRACT_VERSION = '1.1.0';
 const object = <T extends Record<string, TSchema>>(properties: T) => Type.Object(properties, { additionalProperties: false });
 const strings = () => Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 });
 const nullable = <T extends TSchema>(s: T) => Type.Union([s, Type.Null()]);
@@ -140,6 +140,7 @@ export const routes = [
   route('getArtifactContent','GET','/v1/artifacts/:id/content',Type.String({ contentEncoding:'binary' }),undefined,'any'),
   route('claimJob','POST','/v1/worker/jobs/claim',data(nullable(Job)),JobClaim,'worker'),
   route('renewJob','POST','/v1/worker/jobs/:id/renew',data(object({leaseExpiresAt:Timestamp})),object({...Lease.properties,leaseSeconds:Type.Integer({minimum:10,maximum:300})}),'worker'),
+  route('verifyProvisionCommunication','POST','/v1/worker/jobs/:id/verify-communication',data(object({message:Message,escalation:Escalation})),Lease,'worker'),
   route('appendJobEvent','POST','/v1/worker/jobs/:id/events',data(Event),JobEventInput,'worker'),
   route('completeJob','POST','/v1/worker/jobs/:id/complete',data(JobReceipt),JobOutcome,'worker'),
   route('failJob','POST','/v1/worker/jobs/:id/fail',data(JobReceipt),JobFailure,'worker'),

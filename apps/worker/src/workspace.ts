@@ -1,0 +1,278 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { WorkerError } from './errors.js';
+
+export const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
+
+/** Logical read roots exposed to the model's workspace-files tool. */
+export type FileRoot = 'briefs' | 'workspace' | 'output';
+
+export interface StoredFile {
+  /** Storage-relative path, safe to publish as an artifact. */
+  path: string;
+  /** Absolute path under the artifact root, for read-back verification only. */
+  absolutePath: string;
+  sha256: string;
+  size: number;
+  content: Buffer;
+}
+
+function contained(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel.length > 0 && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/** O_NOFOLLOW is a no-op on Windows, where the explicit lstat walk is the guard. */
+const noFollow = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW;
+
+/**
+ * Reject empty, absolute, traversal or otherwise unsafe relative paths. The
+ * control plane independently re-validates every published path, so this guard
+ * only prevents the worker from touching anything outside its configured roots.
+ */
+export function safeRelativePath(path: string): string {
+  if (typeof path !== 'string' || path.length === 0 || path.length > 900 || isAbsolute(path)) {
+    throw new WorkerError('INVALID_PATH', 'File paths must be short, relative and non-empty');
+  }
+  if (!/^[A-Za-z0-9_./ -]+$/.test(path)) throw new WorkerError('INVALID_PATH', `Unsupported characters in path: ${path}`);
+  const parts = path.split('/');
+  const cleaned: string[] = [];
+  for (const part of parts) {
+    const segment = part.trim();
+    if (segment === '' || segment === '.' || segment === '..') throw new WorkerError('INVALID_PATH', `Unsafe path segment in ${path}`);
+    const safe = segment.replace(/[^A-Za-z0-9_.-]/g, '-').replace(/\.+$/, '') || 'file';
+    cleaned.push(safe);
+  }
+  return cleaned.join('/');
+}
+
+export class Workspace {
+  constructor(
+    private readonly artifactRoot: string,
+    private readonly sourceRoot: string,
+  ) {}
+
+  jobPrefix(agentId: string, jobId: string, attempt: number): string {
+    return `${agentId}/${jobId}/${attempt}`;
+  }
+
+  /**
+   * Briefs are scoped per agent (`<sourceRoot>/<agentId>`) so one agent can
+   * never read another agent's approved source material.
+   */
+  private rootFor(root: FileRoot, agentId: string): string {
+    if (root === 'briefs') return join(this.sourceRoot, safeRelativePath(agentId));
+    if (root === 'workspace') return join(this.artifactRoot, safeRelativePath(agentId), 'workspace');
+    return join(this.artifactRoot, safeRelativePath(agentId), 'output');
+  }
+
+  private boundaryFor(root: FileRoot): string {
+    return resolve(root === 'briefs' ? this.sourceRoot : this.artifactRoot);
+  }
+
+  private resolveWithin(root: string, relativePath: string): string {
+    const base = resolve(root);
+    const candidate = resolve(base, safeRelativePath(relativePath));
+    if (candidate !== base && !contained(base, candidate)) {
+      throw new WorkerError('INVALID_PATH', 'Resolved path escapes its configured root');
+    }
+    return candidate;
+  }
+
+  /**
+   * Reject symbolic links on every existing component from the configured
+   * boundary down to the target. This must run before any read or directory
+   * walk so a link planted anywhere in the path cannot redirect access.
+   */
+  private async assertSafePath(boundary: string, target: string): Promise<void> {
+    const base = resolve(boundary);
+    const resolved = resolve(target);
+    if (resolved !== base && !contained(base, resolved)) {
+      throw new WorkerError('INVALID_PATH', 'Path escapes its configured root');
+    }
+    const baseInfo = await lstat(base).catch(() => null);
+    if (baseInfo?.isSymbolicLink()) throw new WorkerError('INVALID_PATH', 'The configured root may not be a symbolic link');
+    if (resolved === base) return;
+    let current = base;
+    for (const part of relative(base, resolved).split(sep)) {
+      current = join(current, part);
+      const info = await lstat(current).catch(() => null);
+      if (!info) break;
+      if (info.isSymbolicLink()) throw new WorkerError('INVALID_PATH', 'Symbolic links are not allowed in workspace paths');
+    }
+  }
+
+  absoluteArtifactPath(relativePath: string): string {
+    return this.resolveWithin(this.artifactRoot, relativePath);
+  }
+
+  /** Publish immutable bytes for one attempt, exclusively and atomically. */
+  async writeArtifact(agentId: string, jobId: string, attempt: number, name: string, content: string | Buffer): Promise<StoredFile> {
+    const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
+    if (bytes.byteLength > MAX_ARTIFACT_BYTES) {
+      throw new WorkerError('ARTIFACT_TOO_LARGE', `Artifacts may not exceed ${MAX_ARTIFACT_BYTES} bytes`);
+    }
+    const relativePath = `${this.jobPrefix(agentId, jobId, attempt)}/${safeRelativePath(name)}`;
+    const absolutePath = this.resolveWithin(this.artifactRoot, relativePath);
+    await this.assertSafePath(this.artifactRoot, absolutePath);
+    await mkdir(dirname(absolutePath), { recursive: true });
+    await this.assertSafePath(this.artifactRoot, absolutePath);
+    let handle;
+    try {
+      // Exclusive creation: two attempts can never race to write the same path.
+      handle = await open(absolutePath, 'wx');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const existing = await readFile(absolutePath);
+      if (!existing.equals(bytes)) throw new WorkerError('ARTIFACT_IMMUTABLE', `Attempt already published different bytes at ${relativePath}`);
+    }
+    if (handle) {
+      try {
+        await handle.write(bytes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
+    return { path: relativePath, absolutePath, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.byteLength, content: bytes };
+  }
+
+  /**
+   * Replace agent-scoped mutable state while holding the attempt fence. Bytes go
+   * to a sibling temp file, are fsynced and are renamed over the destination, so a
+   * crash or a concurrent writer can never leave a partial or interleaved file.
+   * `assertLive` runs before and after the replacement, and the recorded attempt
+   * fence stops a stale attempt from clobbering newer state even if its lease
+   * lapse has not been observed yet.
+   */
+  async replaceAttemptFile(
+    agentId: string,
+    jobId: string,
+    attempt: number,
+    name: string,
+    content: string,
+    assertLive: () => void,
+  ): Promise<string> {
+    const relativePath = safeRelativePath(name);
+    const root = this.rootFor('workspace', agentId);
+    const absolute = this.resolveWithin(root, relativePath);
+    await this.assertSafePath(this.artifactRoot, absolute);
+    await mkdir(dirname(absolute), { recursive: true });
+    await this.assertSafePath(this.artifactRoot, absolute);
+
+    // The fence lives outside the workspace/output roots so it never appears as
+    // recoverable knowledge, and it records which attempt owns this path.
+    const fencePath = this.resolveWithin(this.artifactRoot, `${agentId}/fences/${createHash('sha256').update(relativePath).digest('hex')}.json`);
+    const fence = await readFile(fencePath, 'utf8')
+      .then(raw => JSON.parse(raw) as { jobId?: string; attempt?: number })
+      .catch(() => null);
+    if (fence && fence.jobId === jobId && typeof fence.attempt === 'number' && fence.attempt > attempt) {
+      throw new WorkerError('STALE_ATTEMPT', `Attempt ${attempt} may not overwrite state owned by attempt ${fence.attempt}`);
+    }
+
+    assertLive();
+    const temporary = `${absolute}.tmp-${attempt}-${randomUUID()}`;
+    const handle = await open(temporary, 'w');
+    try {
+      await handle.write(content);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    assertLive();
+    await rename(temporary, absolute);
+    await mkdir(dirname(fencePath), { recursive: true });
+    await writeFile(fencePath, JSON.stringify({ jobId, attempt, updatedAt: new Date().toISOString() }), 'utf8');
+    assertLive();
+    return relativePath;
+  }
+
+  /**
+   * An existing sibling agent sharing this volume, so cross-agent isolation is
+   * proven against real data rather than a fabricated path name.
+   */
+  async otherAgent(agentId: string): Promise<string | null> {
+    for (const root of [this.artifactRoot, this.sourceRoot]) {
+      const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+      // Sorted so the reported sibling is stable across filesystems.
+      const siblings = entries
+        .filter(entry => entry.name !== agentId && (entry.isDirectory() || entry.isSymbolicLink()))
+        .map(entry => entry.name)
+        .sort();
+      if (siblings.length) return siblings[0]!;
+    }
+    return null;
+  }
+
+  async read(root: FileRoot, agentId: string, relativePath: string): Promise<string> {
+    const base = this.rootFor(root, agentId);
+    const absolute = this.resolveWithin(base, relativePath);
+    await this.assertSafePath(this.boundaryFor(root), absolute);
+    try {
+      const info = await stat(absolute);
+      if (!info.isFile()) throw new WorkerError('NOT_A_FILE', `${relativePath} is not a regular file`);
+      if (info.size > MAX_ARTIFACT_BYTES) throw new WorkerError('FILE_TOO_LARGE', `${relativePath} exceeds the readable size limit`);
+      // No-follow open closes the check/use race for the final component.
+      const handle = await open(absolute, constants.O_RDONLY | noFollow);
+      try {
+        return await handle.readFile('utf8');
+      } finally {
+        await handle.close();
+      }
+    } catch (error) {
+      if (error instanceof WorkerError) throw error;
+      throw new WorkerError('FILE_UNAVAILABLE', `Cannot read ${root}:${relativePath}: ${(error as Error).message}`);
+    }
+  }
+
+  async list(root: FileRoot, agentId: string, directory = '.'): Promise<{ path: string; size: number }[]> {
+    const base = this.rootFor(root, agentId);
+    const start = directory === '.' ? base : this.resolveWithin(base, directory);
+    // Guard the requested start before readdir so a symlinked directory cannot be traversed.
+    await this.assertSafePath(this.boundaryFor(root), start);
+    const results: { path: string; size: number }[] = [];
+    const walk = async (current: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await readdir(current, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const absolute = join(current, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) {
+          await walk(absolute);
+        } else if (entry.isFile()) {
+          const info = await stat(absolute);
+          results.push({ path: relative(base, absolute).split(sep).join('/'), size: info.size });
+          if (results.length >= 200) return;
+        }
+      }
+    };
+    await walk(start);
+    return results.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  async hasBriefs(agentId: string): Promise<boolean> {
+    return (await this.list('briefs', agentId)).length > 0;
+  }
+
+  /** Re-read accepted bytes and return their hash and size, detecting later tampering. */
+  async readBack(absolutePath: string): Promise<{ sha256: string; size: number }> {
+    const bytes = await readFile(absolutePath);
+    return { sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.byteLength };
+  }
+
+  /** Durable write/read/hash probe used by runtime verification. */
+  async probe(agentId: string, jobId: string, attempt: number, name: string, content: string): Promise<StoredFile> {
+    const stored = await this.writeArtifact(agentId, jobId, attempt, name, content);
+    const roundTrip = await this.readBack(stored.absolutePath);
+    if (roundTrip.size !== stored.size || roundTrip.sha256 !== stored.sha256) {
+      throw new WorkerError('WORKSPACE_INTEGRITY', `Workspace probe ${stored.path} did not round-trip`);
+    }
+    return stored;
+  }
+}
