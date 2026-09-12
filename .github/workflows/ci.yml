@@ -1,0 +1,158 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  inspect:
+    name: Scope and architecture
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.scope.outputs.core }}
+      worker: ${{ steps.scope.outputs.worker }}
+      web: ${{ steps.scope.outputs.web }}
+      application: ${{ steps.scope.outputs.application }}
+      full_system: ${{ steps.scope.outputs.full_system }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - name: Test CI admission rules
+        run: node --test scripts/ci/*.test.mjs
+      - name: Inspect changed lanes
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            node scripts/ci/inspect.mjs --base-ref "$BASE_SHA"
+          else
+            node scripts/ci/inspect.mjs
+          fi
+      - name: Record verification boundary
+        run: |
+          {
+            echo '## Verification scope'
+            echo 'Core present: ${{ steps.scope.outputs.core }}'
+            echo 'Worker present: ${{ steps.scope.outputs.worker }}'
+            echo 'Console present: ${{ steps.scope.outputs.web }}'
+            echo 'Full system eligible for checks: ${{ steps.scope.outputs.full_system }}'
+            echo 'Missing lanes are not operational. File presence selects checks; it does not prove runtime behavior.'
+          } >> "$GITHUB_STEP_SUMMARY"
+  core:
+    name: Core and PostgreSQL
+    needs: inspect
+    if: needs.inspect.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U factory"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:core
+      - run: pnpm test:core
+      - name: Native PostgreSQL integration
+        run: pnpm --filter @agent-factory/api test:postgres
+        env:
+          TEST_DATABASE_URL: postgres://factory:factory@localhost:5432/factory
+  worker:
+    name: Runtime checks
+    needs: inspect
+    if: needs.inspect.outputs.worker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agent-factory/worker check
+      - run: pnpm --filter @agent-factory/worker test
+  web:
+    name: Console checks and build
+    needs: inspect
+    if: needs.inspect.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agent-factory/web check
+      - run: pnpm --filter @agent-factory/web test
+      - run: pnpm --filter @agent-factory/web build
+  integration:
+    name: Combined system checks
+    needs: [inspect, core, worker, web]
+    if: needs.inspect.outputs.full_system == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U factory"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agent-factory/web exec playwright install --with-deps chromium
+      - run: node scripts/ci/inspect.mjs --require-system
+      - run: pnpm check:combined
+        env:
+          TEST_DATABASE_URL: postgres://factory:factory@localhost:5432/factory
+      - run: docker build --file Dockerfile --tag agent-factory-api:test .
+      - run: docker build --file apps/worker/Dockerfile --tag agent-factory-worker:test .
+      - run: docker build --file apps/web/Dockerfile --tag agent-factory-web:test .
+  gate:
+    name: Merge gate
+    if: always()
+    needs: [inspect, core, worker, web, integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected check to pass
+        env:
+          INSPECT: ${{ needs.inspect.result }}
+          CORE: ${{ needs.core.result }}
+          WORKER: ${{ needs.worker.result }}
+          WEB: ${{ needs.web.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+        run: |
+          test "$INSPECT" = success
+          for result in "$CORE" "$WORKER" "$WEB" "$INTEGRATION"; do
+            case "$result" in success|skipped) ;; *) exit 1 ;; esac
+          done
+          echo 'Selected checks passed. Missing lanes and live model verification remain explicit review prerequisites.' >> "$GITHUB_STEP_SUMMARY"
