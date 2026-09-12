@@ -23,7 +23,7 @@ export const SUPPORTED_TOOLS: Readonly<Record<string, readonly string[]>> = {
 const PRIVATE_SCOPE: Scope = { visibility: 'private', teamId: null, agentIds: [] };
 const MAX_TOOL_RESULT_CHARS = 8_000;
 /** Codes that must stop the whole attempt rather than being returned to the model. */
-const FATAL_TOOL_CODES = new Set(['GRANT_REVOKED', 'EXECUTION_CANCELLED']);
+const FATAL_TOOL_CODES = new Set(['GRANT_REVOKED', 'EXECUTION_CANCELLED', 'ARTIFACT_INTEGRITY']);
 /**
  * Refusals meaning the control plane does not offer the capability yet. Only these
  * are deferred to the blocked diagnostic; every authority, lifecycle or transport
@@ -94,6 +94,7 @@ interface ToolSpec {
 interface WrittenArtifact {
   id: string;
   path: string;
+  size: number;
   sha256: string;
   absolutePath: string;
 }
@@ -278,7 +279,7 @@ export class JobRunner {
       sha256: stored.sha256,
       scope: PRIVATE_SCOPE,
     });
-    return { id: published.id, path: stored.path, sha256: stored.sha256, absolutePath: stored.absolutePath };
+    return { id: published.id, path: stored.path, size: stored.size, sha256: stored.sha256, absolutePath: stored.absolutePath };
   }
 
   /** Emit a tool observation only when the approved manifest grants the operation. */
@@ -454,6 +455,16 @@ export class JobRunner {
         if (call.name === 'list_files') {
           const root = call.arguments.root === 'workspace' ? 'workspace' : 'briefs';
           const listing = await this.deps.workspace.list(root, agent.id, typeof call.arguments.path === 'string' ? call.arguments.path : '.');
+          if (root === 'workspace') {
+            const directory = typeof call.arguments.path === 'string' ? call.arguments.path : '.';
+            for (const [name, artifact] of written) {
+              if (directory === '.' || name.startsWith(`${directory}/`) || artifact.path.startsWith(`${directory}/`)) {
+                const existing = listing.findIndex(file => file.path === name);
+                if (existing !== -1) listing.splice(existing, 1);
+                listing.push({ path: name, size: artifact.size });
+              }
+            }
+          }
           const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { root, path: call.arguments.path ?? '.' });
           if (event) eventIds.push(event);
           return JSON.stringify(listing);
@@ -461,8 +472,23 @@ export class JobRunner {
         if (call.name === 'read_file') {
           const root = call.arguments.root === 'workspace' ? 'workspace' : 'briefs';
           const path = String(call.arguments.path);
-          const content = await this.deps.workspace.read(root, agent.id, path);
-          readCount++;
+          // Expose only artifacts published by this exact tool loop, using the
+          // original write name or the returned storage path as a read alias.
+          // Never resolve arbitrary model-supplied paths against artifactRoot.
+          const artifact = root === 'workspace'
+            ? written.get(path) ?? [...written.values()].find(value => value.path === path)
+            : undefined;
+          let content: string;
+          if (artifact) {
+            const bytes = await readFile(artifact.absolutePath);
+            if (createHash('sha256').update(bytes).digest('hex') !== artifact.sha256) {
+              throw new WorkerError('ARTIFACT_INTEGRITY', `Read-back mismatch for ${artifact.path}`, false);
+            }
+            content = bytes.toString('utf8');
+          } else {
+            content = await this.deps.workspace.read(root, agent.id, path);
+          }
+          if (root === 'briefs') readCount++;
           const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { root, path });
           if (event) eventIds.push(event);
           return content.slice(0, MAX_TOOL_RESULT_CHARS);
@@ -475,7 +501,7 @@ export class JobRunner {
           artifactIds.push(stored.id);
           const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { path: stored.path, sha256: stored.sha256 });
           if (event) eventIds.push(event);
-          return `wrote ${stored.path} (${stored.sha256})`;
+          return `wrote ${stored.path} (${stored.sha256}). To read it back, use read_file with root "workspace" and path "${name}".`;
         }
         if (call.name === 'send_message') {
           const message = await this.deps.client.asAgent<{ id: string }>(job, 'createMessage', '/v1/messages', {

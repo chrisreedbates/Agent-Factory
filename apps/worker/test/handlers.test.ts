@@ -223,6 +223,45 @@ test('provisioning allows sequential discovery, read, write and final response w
   } finally { await rig.cleanup(); }
 });
 
+test('provisioning can list and read back its immutable outputs without exposing other attempts', async () => {
+  const base = provisioningModel();
+  const extraIds = new Set(['read-storage-path', 'read-write-name', 'list-output', 'read-other-agent']);
+  const model: ModelAdapter = { name: base.name, turn: async input => {
+    if (input.system.includes('self-check') || input.system.includes('evaluate a provisioning run')) return base.turn(input);
+    const results = input.messages.filter(message => message.role === 'tool');
+    const tool = (id: string, name: string, args: Record<string, unknown>) => ({
+      content: null, usage: { modelCalls: 1, inputTokens: 1, outputTokens: 1, cost: null },
+      toolCalls: [{ id, name, arguments: args }],
+    });
+    if (results.length === 2) {
+      const storagePath = /^wrote (\S+)/.exec(results[1]!.content)![1]!;
+      return tool('read-storage-path', 'read_file', { root: 'workspace', path: storagePath });
+    }
+    if (results.length === 3) {
+      assert.equal(results[2]!.content, '# Provisioning report\nGrounded in brief.md.');
+      return tool('read-write-name', 'read_file', { root: 'workspace', path: 'provision-report.md' });
+    }
+    if (results.length === 4) {
+      assert.equal(results[3]!.content, results[2]!.content);
+      return tool('list-output', 'list_files', { root: 'workspace' });
+    }
+    if (results.length === 5) {
+      assert.ok(JSON.parse(results[4]!.content).some((file: { path: string }) => file.path === 'provision-report.md'));
+      return tool('read-other-agent', 'read_file', { root: 'workspace', path: 'agent-other/job-other/1/secret.md' });
+    }
+    if (results.length === 6) assert.match(results[5]!.content, /^tool error:/);
+    return base.turn({ ...input, messages: input.messages.filter(message => message.role !== 'tool' || !extraIds.has(message.toolCallId)) });
+  } };
+  const rig = await makeRig(model);
+  try {
+    await rig.workspace.writeArtifact('agent-other', 'job-other', 1, 'secret.md', 'Private sibling data');
+    await runJob(rig, makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(rig.client.completed.at(-1)!.outcome.kind, 'provision_agent');
+    const event = rig.client.events.find(event => event.type === 'verification.end_to_end');
+    assert.equal(event?.data?.briefsRead, 1, 'artifact readback must not count as reading a source brief');
+  } finally { await rig.cleanup(); }
+});
+
 test('provisioning activates through the dedicated fenced communication capability, never delegated sends', async () => {
   const rig = await makeRig(provisioningModel());
   try {
