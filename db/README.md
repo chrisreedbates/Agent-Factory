@@ -1,0 +1,13 @@
+# Durable storage
+
+PostgreSQL is the authority for organization state. Every domain has its own table with a tenant foreign key, positive optimistic revision, JSON object payload, and stable creation ordering. The API owns validation of contract fields and relationships inside the documents; the database additionally enforces retry-key and manifest-version uniqueness. These tables deliberately combine relational ownership with versioned JSON documents so the worker and browser share the API contract without acquiring database access.
+
+Run `pnpm db:migrate` and `pnpm db:seed` from the workspace after configuring `DATABASE_URL` (see the root README). The programmatic `migrate(db)` and `seed(db)` functions require one dedicated PostgreSQL connection for their entire call. Do not pass a pool that routes individual statements to different connections.
+
+The migration runner takes a PostgreSQL transaction advisory lock, applies ordered SQL files in one transaction, and records their SHA-256 hashes. Applied migrations are immutable: add a new numbered migration instead of changing an existing migration on a deployed database. The seed is opt-in and idempotent, leaving existing operator edits intact. It creates only the organization, two teams, local human and worker principals, the factory coordinator, and explicit canonical operating standards. It creates no employee, recruitment, approval, runtime, execution, or verification history.
+
+The service must lock the organization row before checking and changing graph state, approvals, budget capacity, scheduled work, or job ownership. That lock serializes cooperating API instances using PostgreSQL, and all effects must commit in the same transaction. Lease tokens and expiration checks belong to this transaction. Persistent records alone do not prove a worker performed an external action.
+
+Manifests, accepted artifacts, and events have database triggers rejecting update and deletion. New manifest versions receive new records. Retirement preserves history and must not delete tenant records. Artifact records contain scoped immutable file references; the separate persistent artifact volume remains required for actual file durability.
+
+`pnpm --filter @agent-factory/db test` exercises the migration and seed against PGlite's PostgreSQL engine, checks tenant/uniqueness/immutability constraints, and closes/reopens a filesystem-backed database to verify persistence. This is database integration evidence, not real model or worker verification. The test adapter uses `exec` for SQL without bind parameters because a migration contains multiple statements; production `pg` accepts those statements through `query`.

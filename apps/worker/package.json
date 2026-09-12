@@ -1,0 +1,14 @@
+{
+  "name": "@agent-factory/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@agent-factory/contracts": "workspace:*",
+    "openai": "6.9.1"
+  }
+}
