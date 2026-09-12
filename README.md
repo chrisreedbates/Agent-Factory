@@ -26,296 +26,46 @@ pnpm check:combined
 
 Core checks are independent. The combined check fails explicitly until sibling runtime, UI and E2E implementations exist. The worker/web bootstrap tests validate package wiring only.
 
-## Manual end-to-end test
+## Use the web console
 
-The following procedure exercises the control plane, worker, governed approval flow, provisioning, and a delegated task on Windows PowerShell.
-
-### 1. Prepare the environment
-
-Install Node **24.20.0**, pnpm **11.19.0**, Docker Desktop, and PostgreSQL through Docker. From the repository root, install dependencies and create the local environment file:
+To test the product through the webpage, run the integrated deployment:
 
 ```powershell
 pnpm install --frozen-lockfile
 Copy-Item .env.example .env
 ```
 
-Edit `.env` and set two different random tokens, each at least 32 characters long:
-
-```dotenv
-OPERATOR_TOKEN=replace-with-a-long-operator-token
-WORKER_TOKEN=replace-with-a-different-long-worker-token
-```
-
-For a real worker run, also set `MODEL_NAME` and `OPENAI_API_KEY`. Keep model credentials in the worker environment and never in browser code.
-
-### 2. Start PostgreSQL and initialize the database
-
-In Terminal 1:
+In `.env`, set distinct `OPERATOR_TOKEN` and `WORKER_TOKEN` values of at least 32 characters. Set `MODEL_NAME` and `OPENAI_API_KEY` for real model execution. Then start the API, worker, database, and web console:
 
 ```powershell
-docker compose up -d postgres
-docker compose ps
-pnpm db:migrate
-pnpm db:seed
+docker compose -f compose.yaml -f compose.full.yaml up -d --build
 ```
 
-The seed creates the demo organization, teams, operator, worker, factory identity, and canonical standards. It intentionally does not create an active employee or approval.
+Open [http://localhost:8080](http://localhost:8080) in a browser.
 
-### 3. Start the API
+### Browser test flow
 
-In Terminal 2, load `.env` into the current PowerShell process and start the API:
+1. Enter the `OPERATOR_TOKEN` in **Operator session** and select **Start session**.
+2. Confirm that the organization graph and seeded teams are visible.
+3. In **Hire an agent or consultant**, enter a role, mission, team ID, manager ID, responsibilities, expected benefit, and justification.
+4. Select the required tools and submit **Create governed proposal**.
+5. Wait for the proposal to appear under **Exact manifest decisions** with a compiled manifest.
+6. Expand and review the complete manifest. Select **Approve reviewed version** only if the role, manager, tools, permissions, budget, and evaluation criteria are correct. Otherwise select **Reject**.
+7. Select the new agent in the organization graph and watch its verification checks. A successful provisioning flow ends with status `ACTIVE`.
+8. After activation, use **Tasks and messages** to create a task for the agent. Confirm that the task completes and that its evidence, events, resources, evaluations, usage, and artifacts appear in the inspection sections.
+9. Use **Escalations and governance** to exercise escalation handling. Use the agent detail actions to pause, resume, remediate, or retire an agent when appropriate.
+10. For recursive recruitment, select an agent that has the `request_hire` capability, create or run its task, and confirm that the resulting hire is shown under **Recursive recruitment** with `requestedBy` identified as an agent. Human approval is still required.
+11. Use **End session** when finished.
+
+If the API, worker, model credential, or required verification check is unavailable, the console should show an error or a non-active status. It must not display a false success state.
+
+To stop the deployment without deleting persisted state:
 
 ```powershell
-Get-Content .env | ForEach-Object {
-	if ($_ -match '^\s*([^#=]+)=(.*)$') {
-		[Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process')
-	}
-}
-pnpm dev:api
+docker compose -f compose.yaml -f compose.full.yaml down
 ```
 
-The API listens at `http://127.0.0.1:3000`. Leave this terminal running.
-
-### 4. Verify health and operator authentication
-
-In Terminal 3, load `.env` again and test the API:
-
-```powershell
-Get-Content .env | ForEach-Object {
-	if ($_ -match '^\s*([^#=]+)=(.*)$') {
-		[Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process')
-	}
-}
-
-Invoke-RestMethod http://127.0.0.1:3000/health
-
-$operatorHeaders = @{
-	Authorization = "Bearer $env:OPERATOR_TOKEN"
-}
-
-Invoke-RestMethod `
-	-Uri http://127.0.0.1:3000/v1/session `
-	-Method Get `
-	-Headers $operatorHeaders
-
-Invoke-RestMethod `
-	-Uri http://127.0.0.1:3000/v1/organization `
-	-Method Get `
-	-Headers $operatorHeaders
-```
-
-The health response should report contract version `1.1.0`. The session response should identify `human-ceo` as a human principal in `org-demo`.
-
-### 5. Create a hiring request
-
-Create a proposal for a research analyst:
-
-```powershell
-$hireBody = @{
-	justification = "The organization needs a research analyst to produce evidence-backed reports."
-	role = "Research Analyst"
-	mission = "Research approved topics and produce concise evidence-backed deliverables."
-	teamId = "team-research"
-	proposedManagerId = "human-ceo"
-	proposedManagerKind = "human"
-	agentType = "employee"
-	responsibilities = @(
-		"Read approved research briefs",
-		"Analyze source information",
-		"Produce written deliverables"
-	)
-	tools = @("workspace-files")
-	grants = @(
-		@{
-			tool = "workspace-files"
-			operations = @("list", "read", "write")
-			resource = "agent-scoped"
-			credentialRef = $null
-		}
-	)
-	expectedBenefit = "Faster production of reliable research deliverables."
-	budget = @{
-		modelCallsDaily = 10
-		externalSpendDaily = 5
-		currency = "USD"
-		maxConcurrentTasks = 1
-	}
-} | ConvertTo-Json -Depth 10
-
-$hireResponse = Invoke-RestMethod `
-	-Uri http://127.0.0.1:3000/v1/hiring-requests `
-	-Method Post `
-	-Headers @{
-		Authorization = "Bearer $env:OPERATOR_TOKEN"
-		"Content-Type" = "application/json"
-		"Idempotency-Key" = "manual-hire-001"
-	} `
-	-Body $hireBody
-
-$hiringRequestId = $hireResponse.data.id
-$agentId = $hireResponse.data.agentId
-$hiringRequestId
-$agentId
-```
-
-### 6. Start the worker
-
-Create the approved source-brief directory and add a test brief:
-
-```powershell
-New-Item -ItemType Directory -Force -Path .\sources\$agentId
-@"
-Research topic: AI agent governance
-
-Produce a short report covering:
-1. Why approval boundaries matter.
-2. Why evidence should be persisted.
-3. Why agents should not invent permissions.
-"@ | Set-Content .\sources\$agentId\brief.txt
-```
-
-In Terminal 4, load `.env` and start the continuous worker:
-
-```powershell
-Get-Content .env | ForEach-Object {
-	if ($_ -match '^\s*([^#=]+)=(.*)$') {
-		[Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process')
-	}
-}
-pnpm --filter @agent-factory/worker dev
-```
-
-The worker should claim the `compile_manifest` job. Use `pnpm --filter @agent-factory/worker once` instead when a single bounded poll is preferred.
-
-### 7. Review and approve the manifest
-
-Wait until the hiring request has a non-null manifest and status `AWAITING_APPROVAL`:
-
-```powershell
-$hireDetails = Invoke-RestMethod `
-	-Uri "http://127.0.0.1:3000/v1/hiring-requests/$hiringRequestId" `
-	-Method Get `
-	-Headers $operatorHeaders
-
-$hireDetails | ConvertTo-Json -Depth 30
-```
-
-Approve the exact manifest version returned by the API:
-
-```powershell
-$approvalBody = @{
-	decision = "approve"
-	expectedVersion = $hireDetails.data.version
-	manifestVersion = $hireDetails.data.manifestVersion
-	reason = "Approved for manual end-to-end testing."
-} | ConvertTo-Json
-
-Invoke-RestMethod `
-	-Uri "http://127.0.0.1:3000/v1/hiring-requests/$hiringRequestId/decision" `
-	-Method Post `
-	-Headers @{
-		Authorization = "Bearer $env:OPERATOR_TOKEN"
-		"Content-Type" = "application/json"
-		"Idempotency-Key" = "manual-approval-001"
-	} `
-	-Body $approvalBody
-```
-
-This queues a `provision_agent` job. Keep the worker running and wait for provisioning to finish.
-
-### 8. Verify provisioning
-
-Inspect the agent:
-
-```powershell
-Invoke-RestMethod `
-	-Uri "http://127.0.0.1:3000/v1/agents/$agentId" `
-	-Method Get `
-	-Headers $operatorHeaders |
-	ConvertTo-Json -Depth 40
-```
-
-Success is indicated by `status: "ACTIVE"`. If the model key is missing or a mandatory behavioral check fails, `REMEDIATING` is the expected fail-closed result rather than a successful activation.
-
-### 9. Create and verify a delegated task
-
-After the agent is `ACTIVE`, create a task:
-
-```powershell
-$taskBody = @{
-	agentId = $agentId
-	objective = "Read the approved research brief and summarize the main governance lessons."
-	constraints = @(
-		"Use only the approved workspace files.",
-		"Do not invent facts."
-	)
-	deliverable = "A Markdown summary saved in the agent workspace."
-	deadline = $null
-} | ConvertTo-Json -Depth 10
-
-$taskResponse = Invoke-RestMethod `
-	-Uri http://127.0.0.1:3000/v1/tasks `
-	-Method Post `
-	-Headers @{
-		Authorization = "Bearer $env:OPERATOR_TOKEN"
-		"Content-Type" = "application/json"
-		"Idempotency-Key" = "manual-task-001"
-	} `
-	-Body $taskBody
-
-$taskId = $taskResponse.data.id
-$taskId
-```
-
-Wait for the worker to complete the task, then inspect the task and supporting evidence:
-
-```powershell
-Invoke-RestMethod `
-	-Uri "http://127.0.0.1:3000/v1/tasks/$taskId" `
-	-Method Get `
-	-Headers $operatorHeaders |
-	ConvertTo-Json -Depth 40
-
-Invoke-RestMethod http://127.0.0.1:3000/v1/events -Headers $operatorHeaders | ConvertTo-Json -Depth 30
-Invoke-RestMethod http://127.0.0.1:3000/v1/usage -Headers $operatorHeaders | ConvertTo-Json -Depth 30
-Invoke-RestMethod http://127.0.0.1:3000/v1/resources -Headers $operatorHeaders | ConvertTo-Json -Depth 30
-```
-
-The task should reach `COMPLETED` and contain persisted evidence and artifact references. The worker must use approved workspace files and cannot invent permissions.
-
-### 10. Test failure and governance paths
-
-Verify invalid credentials are rejected:
-
-```powershell
-Invoke-RestMethod `
-	-Uri http://127.0.0.1:3000/v1/organization `
-	-Method Get `
-	-Headers @{ Authorization = "Bearer invalid-token" }
-```
-
-The request should return HTTP `401`. Also create a second hiring request and reject it using `POST /v1/hiring-requests/:id/decision`; verify that its final status is `REJECTED`.
-
-### 11. Run automated checks
-
-```powershell
-pnpm check:core
-pnpm test:core
-pnpm --filter @agent-factory/worker check
-pnpm --filter @agent-factory/worker test
-```
-
-`pnpm check:combined` intentionally fails until the sibling runtime, web, and E2E lanes are available. The automated tests and this manual flow do not replace final live acceptance with the integrated browser and real-model workflow.
-
-### 12. Stop services without deleting state
-
-Stop the API and worker with `Ctrl+C`, then stop PostgreSQL:
-
-```powershell
-docker compose stop
-```
-
-Avoid `docker compose down -v` when retaining demo state because it deletes the PostgreSQL volume.
+Avoid `docker compose down -v` unless the database and demo state should be deleted.
 
 ## Worker runtime
 
