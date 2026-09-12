@@ -9,5 +9,7 @@ RUN pnpm --filter @agent-factory/web build
 
 FROM nginx:1.27-alpine
 COPY --from=build /workspace/apps/web/dist /usr/share/nginx/html
+COPY apps/web/nginx.conf.template /etc/nginx/templates/default.conf.template
+ENV API_ORIGIN=http://api:3000
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
