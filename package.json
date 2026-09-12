@@ -1,0 +1,11 @@
+{
+  "name": "agent-factory", "private": true, "version": "0.1.0",
+  "packageManager": "pnpm@11.19.0", "engines": {"node": "24.20.0"},
+  "scripts": {
+    "check:core": "pnpm --filter @agent-factory/contracts check && pnpm --filter @agent-factory/db check && pnpm --filter @agent-factory/api check",
+    "test:core": "pnpm --filter @agent-factory/contracts test && pnpm --filter @agent-factory/db test && pnpm --filter @agent-factory/api test",
+    "check:combined": "node scripts/require-lanes.mjs && pnpm -r check && pnpm -r test",
+    "dev:api": "pnpm --filter @agent-factory/api dev", "db:migrate": "pnpm --filter @agent-factory/db migrate", "db:seed": "pnpm --filter @agent-factory/db seed"
+  },
+  "devDependencies": {"@types/node":"24.10.1", "typescript":"5.9.3", "tsx":"4.20.6"}
+}
