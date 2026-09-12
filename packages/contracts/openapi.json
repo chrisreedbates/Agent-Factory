@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Agent Factory Control Plane",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "paths": {
     "/v1/session": {
@@ -30149,18 +30149,7 @@
             "workerBearer": []
           }
         ],
-        "parameters": [
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "maxLength": 200,
-              "type": "string"
-            }
-          }
-        ],
+        "parameters": [],
         "requestBody": {
           "required": true,
           "content": {
@@ -36736,16 +36725,6 @@
               "minLength": 1,
               "maxLength": 200,
               "pattern": "^[A-Za-z0-9_-]+$",
-              "type": "string"
-            }
-          },
-          {
-            "name": "idempotency-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "minLength": 1,
-              "maxLength": 200,
               "type": "string"
             }
           }

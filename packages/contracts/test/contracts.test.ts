@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Value } from '@sinclair/typebox/value';
-import { Job, JobOutcome, AgentManifest, ErrorResponse, openApi, routes } from '../src/index.js';
+import { Job, JobOutcome, AgentManifest, ErrorResponse, openApi, routes, cleanResponse } from '../src/index.js';
 import { routeFixtures, emptyStates, errorFixtures, workerJobFixtures, jobOutcomes, manifest } from '../src/fixtures.js';
 test('every operation has concrete request and response fixtures matching runtime schemas',()=>{
  assert.equal(routeFixtures.length,routes.length);
@@ -32,4 +32,13 @@ test('server-owned status and spoofed actors cannot be inserted into a manifest'
 test('OpenAPI covers every runtime route without duplicate operations',()=>{
  const api=openApi();assert.equal(api.info.version,'1.0.0');assert.equal(new Set(routes.map(r=>r.operationId)).size,routes.length);
  for(const route of routes) assert.ok(api.paths[route.url.replace(/:([A-Za-z]+)/g,'{$1}')][route.method.toLowerCase()]);
+});
+
+test('response cleaning removes service fields without mutating persisted input',()=>{
+ const internal={...manifest,privateCache:'server-only',agent:{...manifest.agent,internalLease:'secret'}};
+ const result=cleanResponse(AgentManifest,internal);
+ assert.deepEqual(result,manifest);
+ assert.equal(internal.privateCache,'server-only');
+ assert.equal(internal.agent.internalLease,'secret');
+ assert.throws(()=>cleanResponse(AgentManifest,{agent:{id:'broken'}}),/does not match/);
 });

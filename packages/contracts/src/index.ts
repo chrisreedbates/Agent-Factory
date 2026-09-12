@@ -1,6 +1,6 @@
 import { Value } from '@sinclair/typebox/value';
 import { Type, type Static, type TSchema } from '@sinclair/typebox';
-export const CONTRACT_VERSION = '1.0.0';
+export const CONTRACT_VERSION = '1.0.1';
 const object = <T extends Record<string, TSchema>>(properties: T) => Type.Object(properties, { additionalProperties: false });
 const strings = () => Type.Array(Type.String({ minLength: 1 }), { maxItems: 100 });
 const nullable = <T extends TSchema>(s: T) => Type.Union([s, Type.Null()]);
@@ -101,7 +101,7 @@ export const OrganizationDetail = object({ organization: Organization, teams: Ty
 export const AgentDetail = object({ agent: Agent, grants: Type.Array(Grant), resources: Type.Array(Resource), verification: Type.Array(VerificationCheck) });
 export const Schemas = { Organization, Team, FactoryCoordinator, AgentManifest, Agent, HireProposal, HiringRequest, Approval, Task, Message, Escalation, Memory, Learning, Evaluation, Usage, Event, Artifact, Resource, Schedule, Governance, Job, JobOutcome, ErrorResponse };
 export type ApiRoute = { operationId: string; method: 'GET'|'POST'; url: string; auth: 'human'|'worker'|'human-or-agent'|'any'|'public'; schema: { body?: TSchema; params?: TSchema; querystring?: TSchema; headers?: TSchema; response: Record<number, TSchema> } };
-const route = (operationId: string, method: 'GET'|'POST', url: string, response: TSchema, body?: TSchema, auth: ApiRoute['auth'] = 'human', list = false): ApiRoute => ({ operationId, method, url, auth, schema: { ...(body ? { body } : {}), ...(url.includes(':id') ? { params: IdParams } : {}), ...(list ? { querystring: PageQuery } : {}), ...((auth==='any'||auth==='human-or-agent'||method==='POST') ? {headers:Type.Object({...((auth==='any'||auth==='human-or-agent')?DelegationHeaders.properties:{}),...((method==='POST'&&!['claim','renew','login','logout'].includes(operationId))?MutationHeaders.properties:{})},{additionalProperties:true})}:{}), response: { 200: response, 400: ErrorResponse, 401: ErrorResponse, 403: ErrorResponse, 404: ErrorResponse, 409: ErrorResponse, 422: ErrorResponse, 429: ErrorResponse, 500: ErrorResponse } } });
+const route = (operationId: string, method: 'GET'|'POST', url: string, response: TSchema, body?: TSchema, auth: ApiRoute['auth'] = 'human', list = false): ApiRoute => ({ operationId, method, url, auth, schema: { ...(body ? { body } : {}), ...(url.includes(':id') ? { params: IdParams } : {}), ...(list ? { querystring: PageQuery } : {}), ...((auth==='any'||auth==='human-or-agent'||method==='POST') ? {headers:Type.Object({...((auth==='any'||auth==='human-or-agent')?DelegationHeaders.properties:{}),...((method==='POST'&&!['claimJob','renewJob','login','logout'].includes(operationId))?MutationHeaders.properties:{})},{additionalProperties:true})}:{}), response: { 200: response, 400: ErrorResponse, 401: ErrorResponse, 403: ErrorResponse, 404: ErrorResponse, 409: ErrorResponse, 422: ErrorResponse, 429: ErrorResponse, 500: ErrorResponse } } });
 export const routes = [
   route('login','POST','/v1/session',data(AuthContext),object({token:Text}),'public'),
   route('logout','POST','/v1/session/logout',data(object({loggedOut:Type.Boolean()})),object({}),'human'),
@@ -164,3 +164,13 @@ export function openApi() {
 
 export function validateResponse(schema: TSchema, value: unknown): boolean { return Value.Check(schema,value); }
 export function validationErrors(schema: TSchema, value: unknown) { return [...Value.Errors(schema,value)].map(({path,message})=>({path,message})); }
+
+/** Remove service-only fields from a cloned value; never mutate stored state. */
+export function cleanResponse(schema: TSchema, value: unknown): unknown {
+  const cleaned = Value.Clean(schema, structuredClone(value));
+  if (!Value.Check(schema, cleaned)) {
+    const errors = validationErrors(schema, cleaned).map(error => `${error.path}: ${error.message}`).join('; ');
+    throw new Error(`Response does not match the v1 contract: ${errors}`);
+  }
+  return cleaned;
+}
