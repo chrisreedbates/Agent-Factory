@@ -40,6 +40,8 @@ Pausing cancels existing work and fences its leases. Resume restores admission a
 
 Escalating a task makes it terminal and fences the run. Resolving it may create linked follow-up work; it never resurrects the original task. Retirement requires approval and refuses live reports: reconfigure their reporting relationships first. Retirement cancels work, disables schedules, requires cleanup evidence, revokes resource/grant state and retains all memory, messages, tasks and events. A consultant completing its bounded task is paused and receives a pending retirement review.
 
+If retirement cleanup fails permanently or exhausts its worker retries, the agent remains `TERMINATING`. After correcting the cause, the human operator can submit the `remediate` lifecycle action with the current agent version. This queues one new cleanup job using the original approved retirement scope and preserves cancellation of ordinary work. Remediation is rejected while cleanup is queued or running; it does not create a new approval or reactivate the agent.
+
 All state, jobs and audit events commit in one PostgreSQL transaction. An organization row lock serializes authority-changing operations across API processes. The local deployment has one configured tenant/operator/worker credential. Horizontal multi-tenant administration and high-throughput scheduling remain later work.
 
 ## Tests

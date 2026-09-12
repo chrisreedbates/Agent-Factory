@@ -187,12 +187,23 @@ export class Service {
     if(body.action==='pause') {assertAgentTransition(agent.status,'PAUSED');await this.stopWork(id,body.reason);agent=await this.s.save('agents',{...agent,status:'PAUSED',activity:'blocked',cancellationRequested:true});}
     if(body.action==='resume') {assertAgentTransition(agent.status,'ACTIVE');assertVerificationEvidence({manifestVersion:agent.manifestVersion,approvedManifestVersion:agent.approvedManifestVersion,checks:agent.verification??[],requiredChecks:agent.manifest.evaluation.requiredVerificationChecks});agent=await this.s.save('agents',{...agent,status:'ACTIVE',activity:'idle',cancellationRequested:false});}
     if(body.action==='remediate') {
-      if(agent.status!=='REMEDIATING')fail('INVALID_TRANSITION','Only REMEDIATING agents may retry provisioning');
-      const hire=await this.s.get('hiring_requests',agent.hiringRequestId);
-      const approved=agent.approvedManifestVersion!==null&&agent.approvedManifestVersion===agent.manifestVersion;
-      const kind=approved?(agent.reconfiguring?'reconfigure_agent':'provision_agent'):'compile_manifest';
-      agent=await this.s.save('agents',{...agent,status:approved?(agent.reconfiguring?'RECONFIGURING':'PROVISIONING'):'SPECIFYING',activity:'queued',cancellationRequested:false});
-      await enqueue(this.s,{kind,agentId:id,hiringRequestId:hire.id,idempotencyKey:`remediate-${id}-${agent.version}`,payload:approved?{agent,manifest:agent.manifest,manifestVersion:agent.manifestVersion}:{agent,hiringRequest:hire,organization:await this.org(),teams:await this.s.list('teams')}});
+      if(agent.status==='TERMINATING') {
+        const jobs=(await this.s.list('jobs')).filter(job=>job.agentId===id&&job.kind==='retire_agent');
+        if(jobs.some(job=>['QUEUED','RUNNING'].includes(job.status)))fail('RETIREMENT_IN_PROGRESS','Existing cleanup must fail or exhaust its retries before human remediation');
+        const approvals=(await this.s.list('governance')).filter(g=>g.agentId===id&&g.kind==='retire'&&g.status==='APPLIED');
+        const approvedJob=jobs.find(job=>approvals.some(g=>job.idempotencyKey===`retire-${g.id}`));
+        if(!approvedJob||!jobs.some(job=>job.status==='FAILED'))return fail('RETIREMENT_RETRY_UNAVAILABLE','Retirement remediation requires a failed cleanup job backed by human approval');
+        assertRetirementAllowed(id,(await this.graph()).agents);
+        agent=await this.s.save('agents',{...agent,activity:'queued',cancellationRequested:true});
+        await enqueue(this.s,{kind:'retire_agent',agentId:id,hiringRequestId:approvedJob.hiringRequestId,idempotencyKey:`remediate-retire-${id}-${agent.version}`,payload:approvedJob.payload});
+      } else {
+        if(agent.status!=='REMEDIATING')fail('INVALID_TRANSITION','Only REMEDIATING agents or failed TERMINATING cleanup may be remediated');
+        const hire=await this.s.get('hiring_requests',agent.hiringRequestId);
+        const approved=agent.approvedManifestVersion!==null&&agent.approvedManifestVersion===agent.manifestVersion;
+        const kind=approved?(agent.reconfiguring?'reconfigure_agent':'provision_agent'):'compile_manifest';
+        agent=await this.s.save('agents',{...agent,status:approved?(agent.reconfiguring?'RECONFIGURING':'PROVISIONING'):'SPECIFYING',activity:'queued',cancellationRequested:false});
+        await enqueue(this.s,{kind,agentId:id,hiringRequestId:hire.id,idempotencyKey:`remediate-${id}-${agent.version}`,payload:approved?{agent,manifest:agent.manifest,manifestVersion:agent.manifestVersion}:{agent,hiringRequest:hire,organization:await this.org(),teams:await this.s.list('teams')}});
+      }
     }
     await this.s.event(`agent.${body.action}`,body.reason,{agentId:id});return {agent,governance:null};
   }
