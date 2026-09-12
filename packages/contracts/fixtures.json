@@ -1,0 +1,5258 @@
+{
+  "contractVersion": "1.0.0",
+  "notice": "Synthetic contract examples; not evidence of operational employees or completed real verification.",
+  "routes": [
+    {
+      "operationId": "login",
+      "method": "POST",
+      "url": "/v1/session",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-login"
+        },
+        "body": {
+          "token": "example-operator-token"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "principal": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "delegatedAgentId": null,
+          "jobId": null,
+          "attempt": null
+        }
+      }
+    },
+    {
+      "operationId": "logout",
+      "method": "POST",
+      "url": "/v1/session/logout",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-logout"
+        },
+        "body": {}
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "loggedOut": true
+        }
+      }
+    },
+    {
+      "operationId": "getSession",
+      "method": "GET",
+      "url": "/v1/session",
+      "request": {},
+      "status": 200,
+      "response": {
+        "data": {
+          "principal": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "delegatedAgentId": null,
+          "jobId": null,
+          "attempt": null
+        }
+      }
+    },
+    {
+      "operationId": "getOrganization",
+      "method": "GET",
+      "url": "/v1/organization",
+      "request": {},
+      "status": 200,
+      "response": {
+        "data": {
+          "organization": {
+            "id": "org-demo",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "name": "Agent Factory Demo",
+            "mission": "Build a reliable AI-native organization.",
+            "metaAgentId": "meta-factory",
+            "humanPrincipalId": "human-ceo",
+            "limits": {
+              "maxActiveAgents": 10,
+              "maxRecruitmentDepth": 3,
+              "maxPendingHires": 10,
+              "maxDailySpend": 25
+            }
+          },
+          "teams": [
+            {
+              "id": "team-research",
+              "organizationId": "org-demo",
+              "version": 1,
+              "createdAt": "2026-09-12T10:00:00.000Z",
+              "updatedAt": "2026-09-12T10:00:00.000Z",
+              "name": "Research",
+              "mission": "Produce verifiable research."
+            }
+          ],
+          "coordinator": {
+            "id": "meta-factory",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "name": "Factory Coordinator",
+            "kind": "factory",
+            "capabilities": [
+              "compile_manifest",
+              "provision_agent",
+              "verify_agent"
+            ]
+          },
+          "agents": [
+            {
+              "id": "agent-research",
+              "organizationId": "org-demo",
+              "version": 1,
+              "createdAt": "2026-09-12T10:00:00.000Z",
+              "updatedAt": "2026-09-12T10:00:00.000Z",
+              "manifest": {
+                "agent": {
+                  "id": "agent-research",
+                  "name": "Research Lead",
+                  "type": "employee"
+                },
+                "organization": {
+                  "teamId": "team-research",
+                  "managerId": "human-ceo",
+                  "managerKind": "human",
+                  "reports": []
+                },
+                "role": {
+                  "title": "Research Lead"
+                },
+                "mission": {
+                  "primary": "Turn approved source briefs into verified research evidence."
+                },
+                "responsibilities": [
+                  "Review source briefs",
+                  "Delegate evidence checks",
+                  "Identify capability gaps"
+                ],
+                "successMetrics": [
+                  "Evidence-backed reports"
+                ],
+                "runtime": {
+                  "model": "configured-model",
+                  "executionEnvironment": "sandboxed"
+                },
+                "tools": [
+                  "workspace-files",
+                  "request_hire"
+                ],
+                "permissions": [
+                  {
+                    "tool": "workspace-files",
+                    "operations": [
+                      "read",
+                      "write"
+                    ],
+                    "resource": null,
+                    "credentialRef": null
+                  },
+                  {
+                    "tool": "request_hire",
+                    "operations": [
+                      "request"
+                    ],
+                    "resource": null,
+                    "credentialRef": null
+                  }
+                ],
+                "memory": {
+                  "working": true,
+                  "episodic": true,
+                  "semantic": true,
+                  "canonical": true
+                },
+                "learning": {
+                  "enabled": true,
+                  "cadence": "daily",
+                  "autonomousChanges": [
+                    "episodic observations"
+                  ],
+                  "approvalRequiredChanges": [
+                    "canonical policy"
+                  ]
+                },
+                "escalation": {
+                  "managerId": "human-ceo",
+                  "triggers": [
+                    "missing evidence",
+                    "budget exhausted"
+                  ],
+                  "defaultSeverity": "medium"
+                },
+                "budget": {
+                  "modelCallsDaily": 20,
+                  "externalSpendDaily": 5,
+                  "currency": "USD",
+                  "maxConcurrentTasks": 2
+                },
+                "observability": {
+                  "logs": true,
+                  "traces": true,
+                  "metrics": true
+                },
+                "standards": [
+                  "Cite approved source files; never invent evidence."
+                ],
+                "communication": {
+                  "allowedAgentIds": [],
+                  "canContactManager": true,
+                  "canContactHuman": true
+                },
+                "context": {
+                  "companyMission": "Build a reliable AI-native organization.",
+                  "teamMission": "Produce verifiable research.",
+                  "canonicalMemoryIds": [
+                    "memory-standards"
+                  ]
+                },
+                "evaluation": {
+                  "criteria": [
+                    "Every claim has a source"
+                  ],
+                  "requiredVerificationChecks": [
+                    "runtime",
+                    "model",
+                    "tools",
+                    "authentication",
+                    "permissions",
+                    "memory",
+                    "communication",
+                    "escalation",
+                    "observability",
+                    "evaluation",
+                    "restart",
+                    "end_to_end"
+                  ]
+                },
+                "consultant": null
+              },
+              "manifestVersion": 1,
+              "status": "AWAITING_APPROVAL",
+              "activity": "idle",
+              "metaAgentId": "meta-factory",
+              "hiringRequestId": "hire-research",
+              "requestedBy": {
+                "id": "human-ceo",
+                "kind": "human",
+                "organizationId": "org-demo"
+              },
+              "approvedBy": null,
+              "approvedManifestVersion": null,
+              "provisionedBy": null,
+              "cancellationRequested": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operationId": "listAgents",
+      "method": "GET",
+      "url": "/v1/agents",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listAgents"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "agent-research",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "manifest": {
+              "agent": {
+                "id": "agent-research",
+                "name": "Research Lead",
+                "type": "employee"
+              },
+              "organization": {
+                "teamId": "team-research",
+                "managerId": "human-ceo",
+                "managerKind": "human",
+                "reports": []
+              },
+              "role": {
+                "title": "Research Lead"
+              },
+              "mission": {
+                "primary": "Turn approved source briefs into verified research evidence."
+              },
+              "responsibilities": [
+                "Review source briefs",
+                "Delegate evidence checks",
+                "Identify capability gaps"
+              ],
+              "successMetrics": [
+                "Evidence-backed reports"
+              ],
+              "runtime": {
+                "model": "configured-model",
+                "executionEnvironment": "sandboxed"
+              },
+              "tools": [
+                "workspace-files",
+                "request_hire"
+              ],
+              "permissions": [
+                {
+                  "tool": "workspace-files",
+                  "operations": [
+                    "read",
+                    "write"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                },
+                {
+                  "tool": "request_hire",
+                  "operations": [
+                    "request"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                }
+              ],
+              "memory": {
+                "working": true,
+                "episodic": true,
+                "semantic": true,
+                "canonical": true
+              },
+              "learning": {
+                "enabled": true,
+                "cadence": "daily",
+                "autonomousChanges": [
+                  "episodic observations"
+                ],
+                "approvalRequiredChanges": [
+                  "canonical policy"
+                ]
+              },
+              "escalation": {
+                "managerId": "human-ceo",
+                "triggers": [
+                  "missing evidence",
+                  "budget exhausted"
+                ],
+                "defaultSeverity": "medium"
+              },
+              "budget": {
+                "modelCallsDaily": 20,
+                "externalSpendDaily": 5,
+                "currency": "USD",
+                "maxConcurrentTasks": 2
+              },
+              "observability": {
+                "logs": true,
+                "traces": true,
+                "metrics": true
+              },
+              "standards": [
+                "Cite approved source files; never invent evidence."
+              ],
+              "communication": {
+                "allowedAgentIds": [],
+                "canContactManager": true,
+                "canContactHuman": true
+              },
+              "context": {
+                "companyMission": "Build a reliable AI-native organization.",
+                "teamMission": "Produce verifiable research.",
+                "canonicalMemoryIds": [
+                  "memory-standards"
+                ]
+              },
+              "evaluation": {
+                "criteria": [
+                  "Every claim has a source"
+                ],
+                "requiredVerificationChecks": [
+                  "runtime",
+                  "model",
+                  "tools",
+                  "authentication",
+                  "permissions",
+                  "memory",
+                  "communication",
+                  "escalation",
+                  "observability",
+                  "evaluation",
+                  "restart",
+                  "end_to_end"
+                ]
+              },
+              "consultant": null
+            },
+            "manifestVersion": 1,
+            "status": "AWAITING_APPROVAL",
+            "activity": "idle",
+            "metaAgentId": "meta-factory",
+            "hiringRequestId": "hire-research",
+            "requestedBy": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "approvedBy": null,
+            "approvedManifestVersion": null,
+            "provisionedBy": null,
+            "cancellationRequested": false
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "getAgent",
+      "method": "GET",
+      "url": "/v1/agents/:id",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-getAgent"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "agent": {
+            "id": "agent-research",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "manifest": {
+              "agent": {
+                "id": "agent-research",
+                "name": "Research Lead",
+                "type": "employee"
+              },
+              "organization": {
+                "teamId": "team-research",
+                "managerId": "human-ceo",
+                "managerKind": "human",
+                "reports": []
+              },
+              "role": {
+                "title": "Research Lead"
+              },
+              "mission": {
+                "primary": "Turn approved source briefs into verified research evidence."
+              },
+              "responsibilities": [
+                "Review source briefs",
+                "Delegate evidence checks",
+                "Identify capability gaps"
+              ],
+              "successMetrics": [
+                "Evidence-backed reports"
+              ],
+              "runtime": {
+                "model": "configured-model",
+                "executionEnvironment": "sandboxed"
+              },
+              "tools": [
+                "workspace-files",
+                "request_hire"
+              ],
+              "permissions": [
+                {
+                  "tool": "workspace-files",
+                  "operations": [
+                    "read",
+                    "write"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                },
+                {
+                  "tool": "request_hire",
+                  "operations": [
+                    "request"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                }
+              ],
+              "memory": {
+                "working": true,
+                "episodic": true,
+                "semantic": true,
+                "canonical": true
+              },
+              "learning": {
+                "enabled": true,
+                "cadence": "daily",
+                "autonomousChanges": [
+                  "episodic observations"
+                ],
+                "approvalRequiredChanges": [
+                  "canonical policy"
+                ]
+              },
+              "escalation": {
+                "managerId": "human-ceo",
+                "triggers": [
+                  "missing evidence",
+                  "budget exhausted"
+                ],
+                "defaultSeverity": "medium"
+              },
+              "budget": {
+                "modelCallsDaily": 20,
+                "externalSpendDaily": 5,
+                "currency": "USD",
+                "maxConcurrentTasks": 2
+              },
+              "observability": {
+                "logs": true,
+                "traces": true,
+                "metrics": true
+              },
+              "standards": [
+                "Cite approved source files; never invent evidence."
+              ],
+              "communication": {
+                "allowedAgentIds": [],
+                "canContactManager": true,
+                "canContactHuman": true
+              },
+              "context": {
+                "companyMission": "Build a reliable AI-native organization.",
+                "teamMission": "Produce verifiable research.",
+                "canonicalMemoryIds": [
+                  "memory-standards"
+                ]
+              },
+              "evaluation": {
+                "criteria": [
+                  "Every claim has a source"
+                ],
+                "requiredVerificationChecks": [
+                  "runtime",
+                  "model",
+                  "tools",
+                  "authentication",
+                  "permissions",
+                  "memory",
+                  "communication",
+                  "escalation",
+                  "observability",
+                  "evaluation",
+                  "restart",
+                  "end_to_end"
+                ]
+              },
+              "consultant": null
+            },
+            "manifestVersion": 1,
+            "status": "AWAITING_APPROVAL",
+            "activity": "idle",
+            "metaAgentId": "meta-factory",
+            "hiringRequestId": "hire-research",
+            "requestedBy": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "approvedBy": null,
+            "approvedManifestVersion": null,
+            "provisionedBy": null,
+            "cancellationRequested": false
+          },
+          "grants": [
+            {
+              "tool": "workspace-files",
+              "operations": [
+                "read",
+                "write"
+              ],
+              "resource": null,
+              "credentialRef": null
+            }
+          ],
+          "resources": [
+            {
+              "id": "resource-workspace",
+              "organizationId": "org-demo",
+              "version": 1,
+              "createdAt": "2026-09-12T10:00:00.000Z",
+              "updatedAt": "2026-09-12T10:00:00.000Z",
+              "agentId": "agent-research",
+              "type": "workspace",
+              "reference": "agent-research",
+              "status": "AVAILABLE",
+              "grants": [
+                {
+                  "tool": "workspace-files",
+                  "operations": [
+                    "read",
+                    "write"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                }
+              ],
+              "verification": {
+                "name": "memory",
+                "passed": true,
+                "evidence": {
+                  "artifactIds": [
+                    "artifact-report"
+                  ],
+                  "eventIds": [
+                    "event-verification"
+                  ],
+                  "taskId": "task-review",
+                  "jobId": "job-review",
+                  "summary": "Stored report hash and read-back verify the delegated research result."
+                },
+                "error": null
+              }
+            }
+          ],
+          "verification": [
+            {
+              "name": "memory",
+              "passed": true,
+              "evidence": {
+                "artifactIds": [
+                  "artifact-report"
+                ],
+                "eventIds": [
+                  "event-verification"
+                ],
+                "taskId": "task-review",
+                "jobId": "job-review",
+                "summary": "Stored report hash and read-back verify the delegated research result."
+              },
+              "error": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "operationId": "createHiringRequest",
+      "method": "POST",
+      "url": "/v1/hiring-requests",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createHiringRequest"
+        },
+        "body": {
+          "justification": "The organization needs an accountable research function.",
+          "role": "Research Lead",
+          "mission": "Turn approved source briefs into verified research evidence.",
+          "teamId": "team-research",
+          "proposedManagerId": "human-ceo",
+          "proposedManagerKind": "human",
+          "agentType": "employee",
+          "responsibilities": [
+            "Review source briefs",
+            "Delegate evidence checks",
+            "Identify capability gaps"
+          ],
+          "tools": [
+            "workspace-files",
+            "request_hire"
+          ],
+          "grants": [
+            {
+              "tool": "workspace-files",
+              "operations": [
+                "read",
+                "write"
+              ],
+              "resource": null,
+              "credentialRef": null
+            },
+            {
+              "tool": "request_hire",
+              "operations": [
+                "request"
+              ],
+              "resource": null,
+              "credentialRef": null
+            }
+          ],
+          "expectedBenefit": "Reusable research with verified evidence.",
+          "budget": {
+            "modelCallsDaily": 20,
+            "externalSpendDaily": 5,
+            "currency": "USD",
+            "maxConcurrentTasks": 2
+          }
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "hire-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "proposal": {
+            "justification": "The organization needs an accountable research function.",
+            "role": "Research Lead",
+            "mission": "Turn approved source briefs into verified research evidence.",
+            "teamId": "team-research",
+            "proposedManagerId": "human-ceo",
+            "proposedManagerKind": "human",
+            "agentType": "employee",
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "expectedBenefit": "Reusable research with verified evidence.",
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          },
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "originatingTaskId": null,
+          "originatingJobId": null,
+          "proposedManager": "human-ceo",
+          "metaAgentId": "meta-factory",
+          "agentId": "agent-research",
+          "status": "AWAITING_APPROVAL",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null
+        }
+      }
+    },
+    {
+      "operationId": "listHiringRequests",
+      "method": "GET",
+      "url": "/v1/hiring-requests",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listHiringRequests"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "hire-research",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "proposal": {
+              "justification": "The organization needs an accountable research function.",
+              "role": "Research Lead",
+              "mission": "Turn approved source briefs into verified research evidence.",
+              "teamId": "team-research",
+              "proposedManagerId": "human-ceo",
+              "proposedManagerKind": "human",
+              "agentType": "employee",
+              "responsibilities": [
+                "Review source briefs",
+                "Delegate evidence checks",
+                "Identify capability gaps"
+              ],
+              "tools": [
+                "workspace-files",
+                "request_hire"
+              ],
+              "grants": [
+                {
+                  "tool": "workspace-files",
+                  "operations": [
+                    "read",
+                    "write"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                },
+                {
+                  "tool": "request_hire",
+                  "operations": [
+                    "request"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                }
+              ],
+              "expectedBenefit": "Reusable research with verified evidence.",
+              "budget": {
+                "modelCallsDaily": 20,
+                "externalSpendDaily": 5,
+                "currency": "USD",
+                "maxConcurrentTasks": 2
+              }
+            },
+            "requestedBy": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "originatingTaskId": null,
+            "originatingJobId": null,
+            "proposedManager": "human-ceo",
+            "metaAgentId": "meta-factory",
+            "agentId": "agent-research",
+            "status": "AWAITING_APPROVAL",
+            "manifest": {
+              "agent": {
+                "id": "agent-research",
+                "name": "Research Lead",
+                "type": "employee"
+              },
+              "organization": {
+                "teamId": "team-research",
+                "managerId": "human-ceo",
+                "managerKind": "human",
+                "reports": []
+              },
+              "role": {
+                "title": "Research Lead"
+              },
+              "mission": {
+                "primary": "Turn approved source briefs into verified research evidence."
+              },
+              "responsibilities": [
+                "Review source briefs",
+                "Delegate evidence checks",
+                "Identify capability gaps"
+              ],
+              "successMetrics": [
+                "Evidence-backed reports"
+              ],
+              "runtime": {
+                "model": "configured-model",
+                "executionEnvironment": "sandboxed"
+              },
+              "tools": [
+                "workspace-files",
+                "request_hire"
+              ],
+              "permissions": [
+                {
+                  "tool": "workspace-files",
+                  "operations": [
+                    "read",
+                    "write"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                },
+                {
+                  "tool": "request_hire",
+                  "operations": [
+                    "request"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                }
+              ],
+              "memory": {
+                "working": true,
+                "episodic": true,
+                "semantic": true,
+                "canonical": true
+              },
+              "learning": {
+                "enabled": true,
+                "cadence": "daily",
+                "autonomousChanges": [
+                  "episodic observations"
+                ],
+                "approvalRequiredChanges": [
+                  "canonical policy"
+                ]
+              },
+              "escalation": {
+                "managerId": "human-ceo",
+                "triggers": [
+                  "missing evidence",
+                  "budget exhausted"
+                ],
+                "defaultSeverity": "medium"
+              },
+              "budget": {
+                "modelCallsDaily": 20,
+                "externalSpendDaily": 5,
+                "currency": "USD",
+                "maxConcurrentTasks": 2
+              },
+              "observability": {
+                "logs": true,
+                "traces": true,
+                "metrics": true
+              },
+              "standards": [
+                "Cite approved source files; never invent evidence."
+              ],
+              "communication": {
+                "allowedAgentIds": [],
+                "canContactManager": true,
+                "canContactHuman": true
+              },
+              "context": {
+                "companyMission": "Build a reliable AI-native organization.",
+                "teamMission": "Produce verifiable research.",
+                "canonicalMemoryIds": [
+                  "memory-standards"
+                ]
+              },
+              "evaluation": {
+                "criteria": [
+                  "Every claim has a source"
+                ],
+                "requiredVerificationChecks": [
+                  "runtime",
+                  "model",
+                  "tools",
+                  "authentication",
+                  "permissions",
+                  "memory",
+                  "communication",
+                  "escalation",
+                  "observability",
+                  "evaluation",
+                  "restart",
+                  "end_to_end"
+                ]
+              },
+              "consultant": null
+            },
+            "manifestVersion": 1,
+            "approvedBy": null,
+            "approvedManifestVersion": null,
+            "provisionedBy": null
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "getHiringRequest",
+      "method": "GET",
+      "url": "/v1/hiring-requests/:id",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-getHiringRequest"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "hire-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "proposal": {
+            "justification": "The organization needs an accountable research function.",
+            "role": "Research Lead",
+            "mission": "Turn approved source briefs into verified research evidence.",
+            "teamId": "team-research",
+            "proposedManagerId": "human-ceo",
+            "proposedManagerKind": "human",
+            "agentType": "employee",
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "expectedBenefit": "Reusable research with verified evidence.",
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          },
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "originatingTaskId": null,
+          "originatingJobId": null,
+          "proposedManager": "human-ceo",
+          "metaAgentId": "meta-factory",
+          "agentId": "agent-research",
+          "status": "AWAITING_APPROVAL",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null
+        }
+      }
+    },
+    {
+      "operationId": "decideHiringRequest",
+      "method": "POST",
+      "url": "/v1/hiring-requests/:id/decision",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-decideHiringRequest"
+        },
+        "body": {
+          "decision": "approve",
+          "expectedVersion": 1,
+          "manifestVersion": 1,
+          "reason": "Reviewed the exact manifest and operating budget."
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "hire-research",
+          "organizationId": "org-demo",
+          "version": 2,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "proposal": {
+            "justification": "The organization needs an accountable research function.",
+            "role": "Research Lead",
+            "mission": "Turn approved source briefs into verified research evidence.",
+            "teamId": "team-research",
+            "proposedManagerId": "human-ceo",
+            "proposedManagerKind": "human",
+            "agentType": "employee",
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "expectedBenefit": "Reusable research with verified evidence.",
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          },
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "originatingTaskId": null,
+          "originatingJobId": null,
+          "proposedManager": "human-ceo",
+          "metaAgentId": "meta-factory",
+          "agentId": "agent-research",
+          "status": "APPROVED",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "approvedBy": "human-ceo",
+          "approvedManifestVersion": 1,
+          "provisionedBy": null
+        }
+      }
+    },
+    {
+      "operationId": "createTask",
+      "method": "POST",
+      "url": "/v1/tasks",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createTask"
+        },
+        "body": {
+          "agentId": "agent-research",
+          "objective": "Review the approved market brief.",
+          "constraints": [
+            "Use approved source files only."
+          ],
+          "deliverable": "A cited summary in report.md.",
+          "deadline": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "task-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "objective": "Review the approved market brief.",
+          "constraints": [
+            "Use approved source files only."
+          ],
+          "deliverable": "A cited summary in report.md.",
+          "deadline": null,
+          "parentTaskId": null,
+          "inputMessageId": null,
+          "status": "CREATED",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "executedBy": null,
+          "evidence": null,
+          "cancellationRequested": false
+        }
+      }
+    },
+    {
+      "operationId": "listTasks",
+      "method": "GET",
+      "url": "/v1/tasks",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listTasks"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "task-review",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "objective": "Review the approved market brief.",
+            "constraints": [
+              "Use approved source files only."
+            ],
+            "deliverable": "A cited summary in report.md.",
+            "deadline": null,
+            "parentTaskId": null,
+            "inputMessageId": null,
+            "status": "CREATED",
+            "requestedBy": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "executedBy": null,
+            "evidence": null,
+            "cancellationRequested": false
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "getTask",
+      "method": "GET",
+      "url": "/v1/tasks/:id",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-getTask"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "task-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "objective": "Review the approved market brief.",
+          "constraints": [
+            "Use approved source files only."
+          ],
+          "deliverable": "A cited summary in report.md.",
+          "deadline": null,
+          "parentTaskId": null,
+          "inputMessageId": null,
+          "status": "CREATED",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "executedBy": null,
+          "evidence": null,
+          "cancellationRequested": false
+        }
+      }
+    },
+    {
+      "operationId": "cancelTask",
+      "method": "POST",
+      "url": "/v1/tasks/:id/cancel",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-cancelTask"
+        },
+        "body": {
+          "expectedVersion": 1,
+          "reason": "The source brief has been withdrawn."
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "task-review",
+          "organizationId": "org-demo",
+          "version": 2,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "objective": "Review the approved market brief.",
+          "constraints": [
+            "Use approved source files only."
+          ],
+          "deliverable": "A cited summary in report.md.",
+          "deadline": null,
+          "parentTaskId": null,
+          "inputMessageId": null,
+          "status": "CANCELLED",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "executedBy": null,
+          "evidence": null,
+          "cancellationRequested": true
+        }
+      }
+    },
+    {
+      "operationId": "createMessage",
+      "method": "POST",
+      "url": "/v1/messages",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createMessage"
+        },
+        "body": {
+          "recipientId": "agent-research",
+          "recipientKind": "agent",
+          "content": "Review the approved market brief and reply with the evidence.",
+          "actionable": true,
+          "inReplyTo": null,
+          "taskId": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "message-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "recipientId": "agent-research",
+          "recipientKind": "agent",
+          "content": "Review the approved market brief and reply with the evidence.",
+          "actionable": true,
+          "inReplyTo": null,
+          "taskId": "task-review",
+          "sender": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "inputJobId": "job-review",
+          "deliveryStatus": "blocked",
+          "blockedReason": "Agent is awaiting approval."
+        }
+      }
+    },
+    {
+      "operationId": "listMessages",
+      "method": "GET",
+      "url": "/v1/messages",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listMessages"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "message-review",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "recipientId": "agent-research",
+            "recipientKind": "agent",
+            "content": "Review the approved market brief and reply with the evidence.",
+            "actionable": true,
+            "inReplyTo": null,
+            "taskId": "task-review",
+            "sender": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "inputJobId": "job-review",
+            "deliveryStatus": "blocked",
+            "blockedReason": "Agent is awaiting approval."
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "createEscalation",
+      "method": "POST",
+      "url": "/v1/escalations",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createEscalation"
+        },
+        "body": {
+          "agentId": "agent-research",
+          "taskId": "task-review",
+          "severity": "medium",
+          "category": "missing_evidence",
+          "situation": "The brief references an unavailable source.",
+          "attemptedActions": [
+            "Checked the approved source directory."
+          ],
+          "reason": "The source is required to verify a claim.",
+          "recommendation": "Provide the source before continuing.",
+          "requestedFrom": "human-ceo"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "escalation-source",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "taskId": "task-review",
+          "severity": "medium",
+          "category": "missing_evidence",
+          "situation": "The brief references an unavailable source.",
+          "attemptedActions": [
+            "Checked the approved source directory."
+          ],
+          "reason": "The source is required to verify a claim.",
+          "recommendation": "Provide the source before continuing.",
+          "requestedFrom": "human-ceo",
+          "status": "OPEN",
+          "resolution": null,
+          "resolvedBy": null,
+          "followUpTaskId": null
+        }
+      }
+    },
+    {
+      "operationId": "listEscalations",
+      "method": "GET",
+      "url": "/v1/escalations",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listEscalations"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "escalation-source",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "taskId": "task-review",
+            "severity": "medium",
+            "category": "missing_evidence",
+            "situation": "The brief references an unavailable source.",
+            "attemptedActions": [
+              "Checked the approved source directory."
+            ],
+            "reason": "The source is required to verify a claim.",
+            "recommendation": "Provide the source before continuing.",
+            "requestedFrom": "human-ceo",
+            "status": "OPEN",
+            "resolution": null,
+            "resolvedBy": null,
+            "followUpTaskId": null
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "resolveEscalation",
+      "method": "POST",
+      "url": "/v1/escalations/:id/resolve",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-resolveEscalation"
+        },
+        "body": {
+          "expectedVersion": 1,
+          "resolution": "The approved source is now available.",
+          "followUp": {
+            "agentId": "agent-research",
+            "objective": "Review the approved market brief.",
+            "constraints": [
+              "Use approved source files only."
+            ],
+            "deliverable": "A cited summary in report.md.",
+            "deadline": null
+          }
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "escalation-source",
+          "organizationId": "org-demo",
+          "version": 2,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "taskId": "task-review",
+          "severity": "medium",
+          "category": "missing_evidence",
+          "situation": "The brief references an unavailable source.",
+          "attemptedActions": [
+            "Checked the approved source directory."
+          ],
+          "reason": "The source is required to verify a claim.",
+          "recommendation": "Provide the source before continuing.",
+          "requestedFrom": "human-ceo",
+          "status": "RESOLVED",
+          "resolution": "The approved source is now available.",
+          "resolvedBy": "human-ceo",
+          "followUpTaskId": "task-followup"
+        }
+      }
+    },
+    {
+      "operationId": "createMemory",
+      "method": "POST",
+      "url": "/v1/memory",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createMemory"
+        },
+        "body": {
+          "ownerAgentId": "agent-research",
+          "category": "episodic",
+          "title": "Source availability finding",
+          "content": "The referenced evidence file was not included in the approved brief.",
+          "scope": {
+            "visibility": "organization",
+            "teamId": null,
+            "agentIds": []
+          },
+          "provenance": {
+            "artifactIds": [
+              "artifact-report"
+            ],
+            "eventIds": [
+              "event-verification"
+            ],
+            "taskId": "task-review",
+            "jobId": "job-review",
+            "summary": "Stored report hash and read-back verify the delegated research result."
+          },
+          "expiresAt": null,
+          "supersedesId": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "memory-finding",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "ownerAgentId": "agent-research",
+          "category": "episodic",
+          "title": "Source availability finding",
+          "content": "The referenced evidence file was not included in the approved brief.",
+          "scope": {
+            "visibility": "organization",
+            "teamId": null,
+            "agentIds": []
+          },
+          "provenance": {
+            "artifactIds": [
+              "artifact-report"
+            ],
+            "eventIds": [
+              "event-verification"
+            ],
+            "taskId": "task-review",
+            "jobId": "job-review",
+            "summary": "Stored report hash and read-back verify the delegated research result."
+          },
+          "expiresAt": null,
+          "supersedesId": null,
+          "status": "ACTIVE",
+          "approvedBy": null
+        }
+      }
+    },
+    {
+      "operationId": "listMemory",
+      "method": "GET",
+      "url": "/v1/memory",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listMemory"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "memory-finding",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "ownerAgentId": "agent-research",
+            "category": "episodic",
+            "title": "Source availability finding",
+            "content": "The referenced evidence file was not included in the approved brief.",
+            "scope": {
+              "visibility": "organization",
+              "teamId": null,
+              "agentIds": []
+            },
+            "provenance": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "expiresAt": null,
+            "supersedesId": null,
+            "status": "ACTIVE",
+            "approvedBy": null
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "getMemory",
+      "method": "GET",
+      "url": "/v1/memory/:id",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-getMemory"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "memory-finding",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "ownerAgentId": "agent-research",
+          "category": "episodic",
+          "title": "Source availability finding",
+          "content": "The referenced evidence file was not included in the approved brief.",
+          "scope": {
+            "visibility": "organization",
+            "teamId": null,
+            "agentIds": []
+          },
+          "provenance": {
+            "artifactIds": [
+              "artifact-report"
+            ],
+            "eventIds": [
+              "event-verification"
+            ],
+            "taskId": "task-review",
+            "jobId": "job-review",
+            "summary": "Stored report hash and read-back verify the delegated research result."
+          },
+          "expiresAt": null,
+          "supersedesId": null,
+          "status": "ACTIVE",
+          "approvedBy": null
+        }
+      }
+    },
+    {
+      "operationId": "listLearning",
+      "method": "GET",
+      "url": "/v1/learning",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listLearning"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "learning-evidence",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "observation": "Source validation found a missing attachment.",
+            "hypothesis": "Checking attachments before drafting avoids unsupported conclusions.",
+            "conclusion": "Validate source availability before drafting.",
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "memoryIds": [
+              "memory-finding"
+            ],
+            "canonicalRevisionId": null
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listEvaluations",
+      "method": "GET",
+      "url": "/v1/evaluations",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listEvaluations"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "evaluation-report",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "taskId": "task-review",
+            "criteria": "Every claim cites an approved source.",
+            "passed": true,
+            "score": 1,
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listUsage",
+      "method": "GET",
+      "url": "/v1/usage",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listUsage"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "usage-review",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "jobId": "job-review",
+            "attempt": 1,
+            "modelCalls": 1,
+            "inputTokens": 240,
+            "outputTokens": 120,
+            "cost": null,
+            "currency": "USD",
+            "status": "SETTLED",
+            "reservedCost": 0.1
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listEvents",
+      "method": "GET",
+      "url": "/v1/events",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listEvents"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "event-verification",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "taskId": "task-review",
+            "jobId": "job-review",
+            "attempt": 1,
+            "metaAgentId": "meta-factory",
+            "hiringRequestId": "hire-research",
+            "correlationId": "correlation-review",
+            "type": "verification.completed",
+            "message": "Report content was read back and its hash verified.",
+            "data": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "executedBy": "worker-local"
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listResources",
+      "method": "GET",
+      "url": "/v1/resources",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listResources"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "resource-workspace",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "type": "workspace",
+            "reference": "agent-research",
+            "status": "AVAILABLE",
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "verification": {
+              "name": "memory",
+              "passed": true,
+              "evidence": {
+                "artifactIds": [
+                  "artifact-report"
+                ],
+                "eventIds": [
+                  "event-verification"
+                ],
+                "taskId": "task-review",
+                "jobId": "job-review",
+                "summary": "Stored report hash and read-back verify the delegated research result."
+              },
+              "error": null
+            }
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listSchedules",
+      "method": "GET",
+      "url": "/v1/schedules",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listSchedules"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "schedule-learn",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "kind": "learn",
+            "intervalSeconds": 86400,
+            "nextRunAt": "2026-09-13T10:00:00.000Z",
+            "enabled": true,
+            "payload": {}
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "createSchedule",
+      "method": "POST",
+      "url": "/v1/schedules",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createSchedule"
+        },
+        "body": {
+          "agentId": "agent-research",
+          "kind": "learn",
+          "intervalSeconds": 86400,
+          "nextRunAt": "2026-09-13T10:00:00.000Z",
+          "payload": {}
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "schedule-learn",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "kind": "learn",
+          "intervalSeconds": 86400,
+          "nextRunAt": "2026-09-13T10:00:00.000Z",
+          "enabled": true,
+          "payload": {}
+        }
+      }
+    },
+    {
+      "operationId": "lifecycleAction",
+      "method": "POST",
+      "url": "/v1/agents/:id/lifecycle",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-lifecycleAction"
+        },
+        "body": {
+          "action": "pause",
+          "expectedVersion": 1,
+          "reason": "Operator maintenance."
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "agent": {
+            "id": "agent-research",
+            "organizationId": "org-demo",
+            "version": 2,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "manifest": {
+              "agent": {
+                "id": "agent-research",
+                "name": "Research Lead",
+                "type": "employee"
+              },
+              "organization": {
+                "teamId": "team-research",
+                "managerId": "human-ceo",
+                "managerKind": "human",
+                "reports": []
+              },
+              "role": {
+                "title": "Research Lead"
+              },
+              "mission": {
+                "primary": "Turn approved source briefs into verified research evidence."
+              },
+              "responsibilities": [
+                "Review source briefs",
+                "Delegate evidence checks",
+                "Identify capability gaps"
+              ],
+              "successMetrics": [
+                "Evidence-backed reports"
+              ],
+              "runtime": {
+                "model": "configured-model",
+                "executionEnvironment": "sandboxed"
+              },
+              "tools": [
+                "workspace-files",
+                "request_hire"
+              ],
+              "permissions": [
+                {
+                  "tool": "workspace-files",
+                  "operations": [
+                    "read",
+                    "write"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                },
+                {
+                  "tool": "request_hire",
+                  "operations": [
+                    "request"
+                  ],
+                  "resource": null,
+                  "credentialRef": null
+                }
+              ],
+              "memory": {
+                "working": true,
+                "episodic": true,
+                "semantic": true,
+                "canonical": true
+              },
+              "learning": {
+                "enabled": true,
+                "cadence": "daily",
+                "autonomousChanges": [
+                  "episodic observations"
+                ],
+                "approvalRequiredChanges": [
+                  "canonical policy"
+                ]
+              },
+              "escalation": {
+                "managerId": "human-ceo",
+                "triggers": [
+                  "missing evidence",
+                  "budget exhausted"
+                ],
+                "defaultSeverity": "medium"
+              },
+              "budget": {
+                "modelCallsDaily": 20,
+                "externalSpendDaily": 5,
+                "currency": "USD",
+                "maxConcurrentTasks": 2
+              },
+              "observability": {
+                "logs": true,
+                "traces": true,
+                "metrics": true
+              },
+              "standards": [
+                "Cite approved source files; never invent evidence."
+              ],
+              "communication": {
+                "allowedAgentIds": [],
+                "canContactManager": true,
+                "canContactHuman": true
+              },
+              "context": {
+                "companyMission": "Build a reliable AI-native organization.",
+                "teamMission": "Produce verifiable research.",
+                "canonicalMemoryIds": [
+                  "memory-standards"
+                ]
+              },
+              "evaluation": {
+                "criteria": [
+                  "Every claim has a source"
+                ],
+                "requiredVerificationChecks": [
+                  "runtime",
+                  "model",
+                  "tools",
+                  "authentication",
+                  "permissions",
+                  "memory",
+                  "communication",
+                  "escalation",
+                  "observability",
+                  "evaluation",
+                  "restart",
+                  "end_to_end"
+                ]
+              },
+              "consultant": null
+            },
+            "manifestVersion": 1,
+            "status": "PAUSED",
+            "activity": "idle",
+            "metaAgentId": "meta-factory",
+            "hiringRequestId": "hire-research",
+            "requestedBy": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "approvedBy": null,
+            "approvedManifestVersion": null,
+            "provisionedBy": null,
+            "cancellationRequested": false
+          },
+          "governance": null
+        }
+      }
+    },
+    {
+      "operationId": "createGovernance",
+      "method": "POST",
+      "url": "/v1/governance",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-createGovernance"
+        },
+        "body": {
+          "agentId": "agent-research",
+          "kind": "budget",
+          "expectedVersion": 1,
+          "reason": "Expand the approved research capacity.",
+          "changes": {
+            "budget": {
+              "modelCallsDaily": 30,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          }
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "governance-budget",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "kind": "budget",
+          "expectedVersion": 1,
+          "reason": "Expand the approved research capacity.",
+          "changes": {
+            "budget": {
+              "modelCallsDaily": 30,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          },
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "status": "PENDING",
+          "approvedBy": null
+        }
+      }
+    },
+    {
+      "operationId": "listGovernance",
+      "method": "GET",
+      "url": "/v1/governance",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-listGovernance"
+        },
+        "querystring": {
+          "limit": 25
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": [
+          {
+            "id": "governance-budget",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "kind": "budget",
+            "expectedVersion": 1,
+            "reason": "Expand the approved research capacity.",
+            "changes": {
+              "budget": {
+                "modelCallsDaily": 30,
+                "externalSpendDaily": 5,
+                "currency": "USD",
+                "maxConcurrentTasks": 2
+              }
+            },
+            "requestedBy": {
+              "id": "human-ceo",
+              "kind": "human",
+              "organizationId": "org-demo"
+            },
+            "status": "PENDING",
+            "approvedBy": null
+          }
+        ],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "decideGovernance",
+      "method": "POST",
+      "url": "/v1/governance/:id/decision",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-decideGovernance"
+        },
+        "body": {
+          "decision": "approve",
+          "expectedVersion": 1,
+          "reason": "Approved after reviewing the budget delta."
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "governance-budget",
+          "organizationId": "org-demo",
+          "version": 2,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "kind": "budget",
+          "expectedVersion": 1,
+          "reason": "Expand the approved research capacity.",
+          "changes": {
+            "budget": {
+              "modelCallsDaily": 30,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          },
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "status": "APPLIED",
+          "approvedBy": "human-ceo"
+        }
+      }
+    },
+    {
+      "operationId": "getArtifact",
+      "method": "GET",
+      "url": "/v1/artifacts/:id",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-getArtifact"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "artifact-report",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "jobId": "job-review",
+          "attempt": 1,
+          "path": "agent-research/job-review/1/report.md",
+          "contentType": "text/markdown",
+          "size": 142,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "scope": {
+            "visibility": "organization",
+            "teamId": null,
+            "agentIds": []
+          }
+        }
+      }
+    },
+    {
+      "operationId": "getArtifactContent",
+      "method": "GET",
+      "url": "/v1/artifacts/:id/content",
+      "request": {
+        "params": {
+          "id": "agent-research"
+        },
+        "headers": {
+          "idempotency-key": "fixture-getArtifactContent"
+        }
+      },
+      "status": 200,
+      "response": "# Verified report\n"
+    },
+    {
+      "operationId": "claimJob",
+      "method": "POST",
+      "url": "/v1/worker/jobs/claim",
+      "request": {
+        "headers": {
+          "idempotency-key": "fixture-claimJob"
+        },
+        "body": {
+          "kinds": [
+            "run_task"
+          ],
+          "leaseSeconds": 60
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "jobId": "job-review",
+          "kind": "run_task",
+          "payloadVersion": 1,
+          "organizationId": "org-demo",
+          "agentId": "agent-research",
+          "taskId": "task-review",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "inputMessageId": "message-review",
+          "idempotencyKey": "task-review-run",
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+          "payload": {
+            "agent": {
+              "id": "agent-research",
+              "organizationId": "org-demo",
+              "version": 1,
+              "createdAt": "2026-09-12T10:00:00.000Z",
+              "updatedAt": "2026-09-12T10:00:00.000Z",
+              "manifest": {
+                "agent": {
+                  "id": "agent-research",
+                  "name": "Research Lead",
+                  "type": "employee"
+                },
+                "organization": {
+                  "teamId": "team-research",
+                  "managerId": "human-ceo",
+                  "managerKind": "human",
+                  "reports": []
+                },
+                "role": {
+                  "title": "Research Lead"
+                },
+                "mission": {
+                  "primary": "Turn approved source briefs into verified research evidence."
+                },
+                "responsibilities": [
+                  "Review source briefs",
+                  "Delegate evidence checks",
+                  "Identify capability gaps"
+                ],
+                "successMetrics": [
+                  "Evidence-backed reports"
+                ],
+                "runtime": {
+                  "model": "configured-model",
+                  "executionEnvironment": "sandboxed"
+                },
+                "tools": [
+                  "workspace-files",
+                  "request_hire"
+                ],
+                "permissions": [
+                  {
+                    "tool": "workspace-files",
+                    "operations": [
+                      "read",
+                      "write"
+                    ],
+                    "resource": null,
+                    "credentialRef": null
+                  },
+                  {
+                    "tool": "request_hire",
+                    "operations": [
+                      "request"
+                    ],
+                    "resource": null,
+                    "credentialRef": null
+                  }
+                ],
+                "memory": {
+                  "working": true,
+                  "episodic": true,
+                  "semantic": true,
+                  "canonical": true
+                },
+                "learning": {
+                  "enabled": true,
+                  "cadence": "daily",
+                  "autonomousChanges": [
+                    "episodic observations"
+                  ],
+                  "approvalRequiredChanges": [
+                    "canonical policy"
+                  ]
+                },
+                "escalation": {
+                  "managerId": "human-ceo",
+                  "triggers": [
+                    "missing evidence",
+                    "budget exhausted"
+                  ],
+                  "defaultSeverity": "medium"
+                },
+                "budget": {
+                  "modelCallsDaily": 20,
+                  "externalSpendDaily": 5,
+                  "currency": "USD",
+                  "maxConcurrentTasks": 2
+                },
+                "observability": {
+                  "logs": true,
+                  "traces": true,
+                  "metrics": true
+                },
+                "standards": [
+                  "Cite approved source files; never invent evidence."
+                ],
+                "communication": {
+                  "allowedAgentIds": [],
+                  "canContactManager": true,
+                  "canContactHuman": true
+                },
+                "context": {
+                  "companyMission": "Build a reliable AI-native organization.",
+                  "teamMission": "Produce verifiable research.",
+                  "canonicalMemoryIds": [
+                    "memory-standards"
+                  ]
+                },
+                "evaluation": {
+                  "criteria": [
+                    "Every claim has a source"
+                  ],
+                  "requiredVerificationChecks": [
+                    "runtime",
+                    "model",
+                    "tools",
+                    "authentication",
+                    "permissions",
+                    "memory",
+                    "communication",
+                    "escalation",
+                    "observability",
+                    "evaluation",
+                    "restart",
+                    "end_to_end"
+                  ]
+                },
+                "consultant": null
+              },
+              "manifestVersion": 1,
+              "status": "AWAITING_APPROVAL",
+              "activity": "idle",
+              "metaAgentId": "meta-factory",
+              "hiringRequestId": "hire-research",
+              "requestedBy": {
+                "id": "human-ceo",
+                "kind": "human",
+                "organizationId": "org-demo"
+              },
+              "approvedBy": null,
+              "approvedManifestVersion": null,
+              "provisionedBy": null,
+              "cancellationRequested": false
+            },
+            "task": {
+              "id": "task-review",
+              "organizationId": "org-demo",
+              "version": 1,
+              "createdAt": "2026-09-12T10:00:00.000Z",
+              "updatedAt": "2026-09-12T10:00:00.000Z",
+              "agentId": "agent-research",
+              "objective": "Review the approved market brief.",
+              "constraints": [
+                "Use approved source files only."
+              ],
+              "deliverable": "A cited summary in report.md.",
+              "deadline": null,
+              "parentTaskId": null,
+              "inputMessageId": null,
+              "status": "CREATED",
+              "requestedBy": {
+                "id": "human-ceo",
+                "kind": "human",
+                "organizationId": "org-demo"
+              },
+              "executedBy": null,
+              "evidence": null,
+              "cancellationRequested": false
+            },
+            "inputMessage": {
+              "id": "message-review",
+              "organizationId": "org-demo",
+              "version": 1,
+              "createdAt": "2026-09-12T10:00:00.000Z",
+              "updatedAt": "2026-09-12T10:00:00.000Z",
+              "recipientId": "agent-research",
+              "recipientKind": "agent",
+              "content": "Review the approved market brief and reply with the evidence.",
+              "actionable": true,
+              "inReplyTo": null,
+              "taskId": "task-review",
+              "sender": {
+                "id": "human-ceo",
+                "kind": "human",
+                "organizationId": "org-demo"
+              },
+              "inputJobId": "job-review",
+              "deliveryStatus": "blocked",
+              "blockedReason": "Agent is awaiting approval."
+            }
+          }
+        }
+      }
+    },
+    {
+      "operationId": "renewJob",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/renew",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-renewJob"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "leaseSeconds": 60
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "leaseExpiresAt": "2026-09-12T10:02:00.000Z"
+        }
+      }
+    },
+    {
+      "operationId": "appendJobEvent",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/events",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-appendJobEvent"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "type": "verification.completed",
+          "message": "Report content was read back and its hash verified.",
+          "data": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "event-verification",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "taskId": "task-review",
+          "jobId": "job-review",
+          "attempt": 1,
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "correlationId": "correlation-review",
+          "type": "verification.completed",
+          "message": "Report content was read back and its hash verified.",
+          "data": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "executedBy": "worker-local"
+        }
+      }
+    },
+    {
+      "operationId": "completeJob",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/complete",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-completeJob"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "outcome": {
+            "kind": "run_task",
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "summary": "Completed the source review.",
+            "reply": "The report is ready for review."
+          }
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "jobId": "job-review",
+          "status": "COMPLETED",
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "operationId": "failJob",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/fail",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-failJob"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "code": "SOURCE_UNAVAILABLE",
+          "message": "Approved source is unavailable.",
+          "retryable": false,
+          "evidence": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "jobId": "job-review",
+          "status": "FAILED",
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "operationId": "publishArtifact",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/artifacts",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-publishArtifact"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "path": "agent-research/job-review/1/report.md",
+          "contentType": "text/markdown",
+          "size": 142,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "scope": {
+            "visibility": "organization",
+            "teamId": null,
+            "agentIds": []
+          }
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "artifact-report",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "jobId": "job-review",
+          "attempt": 1,
+          "path": "agent-research/job-review/1/report.md",
+          "contentType": "text/markdown",
+          "size": 142,
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "scope": {
+            "visibility": "organization",
+            "teamId": null,
+            "agentIds": []
+          }
+        }
+      }
+    },
+    {
+      "operationId": "reserveBudget",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/budget/reserve",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-reserveBudget"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "modelCalls": 1,
+          "cost": 0.1,
+          "currency": "USD"
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "usage-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "jobId": "job-review",
+          "attempt": 1,
+          "modelCalls": 1,
+          "inputTokens": null,
+          "outputTokens": null,
+          "cost": null,
+          "currency": "USD",
+          "status": "RESERVED",
+          "reservedCost": 0.1
+        }
+      }
+    },
+    {
+      "operationId": "settleBudget",
+      "method": "POST",
+      "url": "/v1/worker/jobs/:id/budget/settle",
+      "request": {
+        "params": {
+          "id": "job-review"
+        },
+        "headers": {
+          "idempotency-key": "fixture-settleBudget"
+        },
+        "body": {
+          "leaseToken": "lease-token-example",
+          "attempt": 1,
+          "reservationId": "usage-review",
+          "modelCalls": 1,
+          "inputTokens": 240,
+          "outputTokens": 120,
+          "cost": null
+        }
+      },
+      "status": 200,
+      "response": {
+        "data": {
+          "id": "usage-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "jobId": "job-review",
+          "attempt": 1,
+          "modelCalls": 1,
+          "inputTokens": 240,
+          "outputTokens": 120,
+          "cost": null,
+          "currency": "USD",
+          "status": "SETTLED",
+          "reservedCost": 0.1
+        }
+      }
+    }
+  ],
+  "emptyStates": [
+    {
+      "operationId": "listAgents",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listHiringRequests",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listTasks",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listMessages",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listEscalations",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listMemory",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listLearning",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listEvaluations",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listUsage",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listEvents",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listResources",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listSchedules",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    },
+    {
+      "operationId": "listGovernance",
+      "status": 200,
+      "response": {
+        "data": [],
+        "nextCursor": null
+      }
+    }
+  ],
+  "errors": [
+    {
+      "status": 401,
+      "response": {
+        "error": {
+          "code": "UNAUTHENTICATED",
+          "message": "An operator session or valid worker credential is required.",
+          "retryable": false,
+          "correlationId": "correlation-auth"
+        }
+      }
+    },
+    {
+      "status": 409,
+      "response": {
+        "error": {
+          "code": "VERSION_CONFLICT",
+          "message": "The reviewed manifest version has changed.",
+          "retryable": false,
+          "correlationId": "correlation-version"
+        }
+      }
+    },
+    {
+      "status": 409,
+      "response": {
+        "error": {
+          "code": "LEASE_EXPIRED",
+          "message": "This attempt no longer owns the job lease.",
+          "retryable": false,
+          "correlationId": "correlation-lease"
+        }
+      }
+    },
+    {
+      "status": 429,
+      "response": {
+        "error": {
+          "code": "BUDGET_EXCEEDED",
+          "message": "The daily budget cannot cover this reservation.",
+          "retryable": true,
+          "correlationId": "correlation-budget"
+        }
+      }
+    }
+  ],
+  "workerJobs": [
+    {
+      "jobId": "job-compile",
+      "kind": "compile_manifest",
+      "payloadVersion": 1,
+      "organizationId": "org-demo",
+      "agentId": "agent-research",
+      "taskId": null,
+      "metaAgentId": "meta-factory",
+      "hiringRequestId": "hire-research",
+      "inputMessageId": null,
+      "idempotencyKey": "task-review-run",
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+      "payload": {
+        "hiringRequest": {
+          "id": "hire-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "proposal": {
+            "justification": "The organization needs an accountable research function.",
+            "role": "Research Lead",
+            "mission": "Turn approved source briefs into verified research evidence.",
+            "teamId": "team-research",
+            "proposedManagerId": "human-ceo",
+            "proposedManagerKind": "human",
+            "agentType": "employee",
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "expectedBenefit": "Reusable research with verified evidence.",
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            }
+          },
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "originatingTaskId": null,
+          "originatingJobId": null,
+          "proposedManager": "human-ceo",
+          "metaAgentId": "meta-factory",
+          "agentId": "agent-research",
+          "status": "AWAITING_APPROVAL",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null
+        },
+        "agent": {
+          "id": "agent-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "status": "AWAITING_APPROVAL",
+          "activity": "idle",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null,
+          "cancellationRequested": false
+        },
+        "organization": {
+          "id": "org-demo",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "name": "Agent Factory Demo",
+          "mission": "Build a reliable AI-native organization.",
+          "metaAgentId": "meta-factory",
+          "humanPrincipalId": "human-ceo",
+          "limits": {
+            "maxActiveAgents": 10,
+            "maxRecruitmentDepth": 3,
+            "maxPendingHires": 10,
+            "maxDailySpend": 25
+          }
+        },
+        "teams": [
+          {
+            "id": "team-research",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "name": "Research",
+            "mission": "Produce verifiable research."
+          }
+        ]
+      }
+    },
+    {
+      "jobId": "job-provision_agent",
+      "kind": "provision_agent",
+      "payloadVersion": 1,
+      "organizationId": "org-demo",
+      "agentId": "agent-research",
+      "taskId": null,
+      "metaAgentId": "meta-factory",
+      "hiringRequestId": "hire-research",
+      "inputMessageId": null,
+      "idempotencyKey": "task-review-run",
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+      "payload": {
+        "agent": {
+          "id": "agent-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "status": "AWAITING_APPROVAL",
+          "activity": "idle",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null,
+          "cancellationRequested": false
+        },
+        "manifest": {
+          "agent": {
+            "id": "agent-research",
+            "name": "Research Lead",
+            "type": "employee"
+          },
+          "organization": {
+            "teamId": "team-research",
+            "managerId": "human-ceo",
+            "managerKind": "human",
+            "reports": []
+          },
+          "role": {
+            "title": "Research Lead"
+          },
+          "mission": {
+            "primary": "Turn approved source briefs into verified research evidence."
+          },
+          "responsibilities": [
+            "Review source briefs",
+            "Delegate evidence checks",
+            "Identify capability gaps"
+          ],
+          "successMetrics": [
+            "Evidence-backed reports"
+          ],
+          "runtime": {
+            "model": "configured-model",
+            "executionEnvironment": "sandboxed"
+          },
+          "tools": [
+            "workspace-files",
+            "request_hire"
+          ],
+          "permissions": [
+            {
+              "tool": "workspace-files",
+              "operations": [
+                "read",
+                "write"
+              ],
+              "resource": null,
+              "credentialRef": null
+            },
+            {
+              "tool": "request_hire",
+              "operations": [
+                "request"
+              ],
+              "resource": null,
+              "credentialRef": null
+            }
+          ],
+          "memory": {
+            "working": true,
+            "episodic": true,
+            "semantic": true,
+            "canonical": true
+          },
+          "learning": {
+            "enabled": true,
+            "cadence": "daily",
+            "autonomousChanges": [
+              "episodic observations"
+            ],
+            "approvalRequiredChanges": [
+              "canonical policy"
+            ]
+          },
+          "escalation": {
+            "managerId": "human-ceo",
+            "triggers": [
+              "missing evidence",
+              "budget exhausted"
+            ],
+            "defaultSeverity": "medium"
+          },
+          "budget": {
+            "modelCallsDaily": 20,
+            "externalSpendDaily": 5,
+            "currency": "USD",
+            "maxConcurrentTasks": 2
+          },
+          "observability": {
+            "logs": true,
+            "traces": true,
+            "metrics": true
+          },
+          "standards": [
+            "Cite approved source files; never invent evidence."
+          ],
+          "communication": {
+            "allowedAgentIds": [],
+            "canContactManager": true,
+            "canContactHuman": true
+          },
+          "context": {
+            "companyMission": "Build a reliable AI-native organization.",
+            "teamMission": "Produce verifiable research.",
+            "canonicalMemoryIds": [
+              "memory-standards"
+            ]
+          },
+          "evaluation": {
+            "criteria": [
+              "Every claim has a source"
+            ],
+            "requiredVerificationChecks": [
+              "runtime",
+              "model",
+              "tools",
+              "authentication",
+              "permissions",
+              "memory",
+              "communication",
+              "escalation",
+              "observability",
+              "evaluation",
+              "restart",
+              "end_to_end"
+            ]
+          },
+          "consultant": null
+        },
+        "manifestVersion": 1
+      }
+    },
+    {
+      "jobId": "job-reconfigure_agent",
+      "kind": "reconfigure_agent",
+      "payloadVersion": 1,
+      "organizationId": "org-demo",
+      "agentId": "agent-research",
+      "taskId": null,
+      "metaAgentId": "meta-factory",
+      "hiringRequestId": "hire-research",
+      "inputMessageId": null,
+      "idempotencyKey": "task-review-run",
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+      "payload": {
+        "agent": {
+          "id": "agent-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "status": "AWAITING_APPROVAL",
+          "activity": "idle",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null,
+          "cancellationRequested": false
+        },
+        "manifest": {
+          "agent": {
+            "id": "agent-research",
+            "name": "Research Lead",
+            "type": "employee"
+          },
+          "organization": {
+            "teamId": "team-research",
+            "managerId": "human-ceo",
+            "managerKind": "human",
+            "reports": []
+          },
+          "role": {
+            "title": "Research Lead"
+          },
+          "mission": {
+            "primary": "Turn approved source briefs into verified research evidence."
+          },
+          "responsibilities": [
+            "Review source briefs",
+            "Delegate evidence checks",
+            "Identify capability gaps"
+          ],
+          "successMetrics": [
+            "Evidence-backed reports"
+          ],
+          "runtime": {
+            "model": "configured-model",
+            "executionEnvironment": "sandboxed"
+          },
+          "tools": [
+            "workspace-files",
+            "request_hire"
+          ],
+          "permissions": [
+            {
+              "tool": "workspace-files",
+              "operations": [
+                "read",
+                "write"
+              ],
+              "resource": null,
+              "credentialRef": null
+            },
+            {
+              "tool": "request_hire",
+              "operations": [
+                "request"
+              ],
+              "resource": null,
+              "credentialRef": null
+            }
+          ],
+          "memory": {
+            "working": true,
+            "episodic": true,
+            "semantic": true,
+            "canonical": true
+          },
+          "learning": {
+            "enabled": true,
+            "cadence": "daily",
+            "autonomousChanges": [
+              "episodic observations"
+            ],
+            "approvalRequiredChanges": [
+              "canonical policy"
+            ]
+          },
+          "escalation": {
+            "managerId": "human-ceo",
+            "triggers": [
+              "missing evidence",
+              "budget exhausted"
+            ],
+            "defaultSeverity": "medium"
+          },
+          "budget": {
+            "modelCallsDaily": 20,
+            "externalSpendDaily": 5,
+            "currency": "USD",
+            "maxConcurrentTasks": 2
+          },
+          "observability": {
+            "logs": true,
+            "traces": true,
+            "metrics": true
+          },
+          "standards": [
+            "Cite approved source files; never invent evidence."
+          ],
+          "communication": {
+            "allowedAgentIds": [],
+            "canContactManager": true,
+            "canContactHuman": true
+          },
+          "context": {
+            "companyMission": "Build a reliable AI-native organization.",
+            "teamMission": "Produce verifiable research.",
+            "canonicalMemoryIds": [
+              "memory-standards"
+            ]
+          },
+          "evaluation": {
+            "criteria": [
+              "Every claim has a source"
+            ],
+            "requiredVerificationChecks": [
+              "runtime",
+              "model",
+              "tools",
+              "authentication",
+              "permissions",
+              "memory",
+              "communication",
+              "escalation",
+              "observability",
+              "evaluation",
+              "restart",
+              "end_to_end"
+            ]
+          },
+          "consultant": null
+        },
+        "manifestVersion": 1
+      }
+    },
+    {
+      "jobId": "job-review",
+      "kind": "run_task",
+      "payloadVersion": 1,
+      "organizationId": "org-demo",
+      "agentId": "agent-research",
+      "taskId": "task-review",
+      "metaAgentId": "meta-factory",
+      "hiringRequestId": "hire-research",
+      "inputMessageId": "message-review",
+      "idempotencyKey": "task-review-run",
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+      "payload": {
+        "agent": {
+          "id": "agent-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "status": "AWAITING_APPROVAL",
+          "activity": "idle",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null,
+          "cancellationRequested": false
+        },
+        "task": {
+          "id": "task-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "agentId": "agent-research",
+          "objective": "Review the approved market brief.",
+          "constraints": [
+            "Use approved source files only."
+          ],
+          "deliverable": "A cited summary in report.md.",
+          "deadline": null,
+          "parentTaskId": null,
+          "inputMessageId": null,
+          "status": "CREATED",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "executedBy": null,
+          "evidence": null,
+          "cancellationRequested": false
+        },
+        "inputMessage": {
+          "id": "message-review",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "recipientId": "agent-research",
+          "recipientKind": "agent",
+          "content": "Review the approved market brief and reply with the evidence.",
+          "actionable": true,
+          "inReplyTo": null,
+          "taskId": "task-review",
+          "sender": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "inputJobId": "job-review",
+          "deliveryStatus": "blocked",
+          "blockedReason": "Agent is awaiting approval."
+        }
+      }
+    },
+    {
+      "jobId": "job-review",
+      "kind": "learn",
+      "payloadVersion": 1,
+      "organizationId": "org-demo",
+      "agentId": "agent-research",
+      "taskId": null,
+      "metaAgentId": "meta-factory",
+      "hiringRequestId": "hire-research",
+      "inputMessageId": null,
+      "idempotencyKey": "task-review-run",
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+      "payload": {
+        "agent": {
+          "id": "agent-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "status": "AWAITING_APPROVAL",
+          "activity": "idle",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null,
+          "cancellationRequested": false
+        }
+      }
+    },
+    {
+      "jobId": "job-review",
+      "kind": "retire_agent",
+      "payloadVersion": 1,
+      "organizationId": "org-demo",
+      "agentId": "agent-research",
+      "taskId": null,
+      "metaAgentId": "meta-factory",
+      "hiringRequestId": "hire-research",
+      "inputMessageId": null,
+      "idempotencyKey": "task-review-run",
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "leaseExpiresAt": "2026-09-12T10:01:00.000Z",
+      "payload": {
+        "agent": {
+          "id": "agent-research",
+          "organizationId": "org-demo",
+          "version": 1,
+          "createdAt": "2026-09-12T10:00:00.000Z",
+          "updatedAt": "2026-09-12T10:00:00.000Z",
+          "manifest": {
+            "agent": {
+              "id": "agent-research",
+              "name": "Research Lead",
+              "type": "employee"
+            },
+            "organization": {
+              "teamId": "team-research",
+              "managerId": "human-ceo",
+              "managerKind": "human",
+              "reports": []
+            },
+            "role": {
+              "title": "Research Lead"
+            },
+            "mission": {
+              "primary": "Turn approved source briefs into verified research evidence."
+            },
+            "responsibilities": [
+              "Review source briefs",
+              "Delegate evidence checks",
+              "Identify capability gaps"
+            ],
+            "successMetrics": [
+              "Evidence-backed reports"
+            ],
+            "runtime": {
+              "model": "configured-model",
+              "executionEnvironment": "sandboxed"
+            },
+            "tools": [
+              "workspace-files",
+              "request_hire"
+            ],
+            "permissions": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              },
+              {
+                "tool": "request_hire",
+                "operations": [
+                  "request"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "memory": {
+              "working": true,
+              "episodic": true,
+              "semantic": true,
+              "canonical": true
+            },
+            "learning": {
+              "enabled": true,
+              "cadence": "daily",
+              "autonomousChanges": [
+                "episodic observations"
+              ],
+              "approvalRequiredChanges": [
+                "canonical policy"
+              ]
+            },
+            "escalation": {
+              "managerId": "human-ceo",
+              "triggers": [
+                "missing evidence",
+                "budget exhausted"
+              ],
+              "defaultSeverity": "medium"
+            },
+            "budget": {
+              "modelCallsDaily": 20,
+              "externalSpendDaily": 5,
+              "currency": "USD",
+              "maxConcurrentTasks": 2
+            },
+            "observability": {
+              "logs": true,
+              "traces": true,
+              "metrics": true
+            },
+            "standards": [
+              "Cite approved source files; never invent evidence."
+            ],
+            "communication": {
+              "allowedAgentIds": [],
+              "canContactManager": true,
+              "canContactHuman": true
+            },
+            "context": {
+              "companyMission": "Build a reliable AI-native organization.",
+              "teamMission": "Produce verifiable research.",
+              "canonicalMemoryIds": [
+                "memory-standards"
+              ]
+            },
+            "evaluation": {
+              "criteria": [
+                "Every claim has a source"
+              ],
+              "requiredVerificationChecks": [
+                "runtime",
+                "model",
+                "tools",
+                "authentication",
+                "permissions",
+                "memory",
+                "communication",
+                "escalation",
+                "observability",
+                "evaluation",
+                "restart",
+                "end_to_end"
+              ]
+            },
+            "consultant": null
+          },
+          "manifestVersion": 1,
+          "status": "AWAITING_APPROVAL",
+          "activity": "idle",
+          "metaAgentId": "meta-factory",
+          "hiringRequestId": "hire-research",
+          "requestedBy": {
+            "id": "human-ceo",
+            "kind": "human",
+            "organizationId": "org-demo"
+          },
+          "approvedBy": null,
+          "approvedManifestVersion": null,
+          "provisionedBy": null,
+          "cancellationRequested": false
+        },
+        "reason": "Human-approved retirement."
+      }
+    }
+  ],
+  "workerOutcomes": [
+    {
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "outcome": {
+        "kind": "compile_manifest",
+        "manifest": {
+          "agent": {
+            "id": "agent-research",
+            "name": "Research Lead",
+            "type": "employee"
+          },
+          "organization": {
+            "teamId": "team-research",
+            "managerId": "human-ceo",
+            "managerKind": "human",
+            "reports": []
+          },
+          "role": {
+            "title": "Research Lead"
+          },
+          "mission": {
+            "primary": "Turn approved source briefs into verified research evidence."
+          },
+          "responsibilities": [
+            "Review source briefs",
+            "Delegate evidence checks",
+            "Identify capability gaps"
+          ],
+          "successMetrics": [
+            "Evidence-backed reports"
+          ],
+          "runtime": {
+            "model": "configured-model",
+            "executionEnvironment": "sandboxed"
+          },
+          "tools": [
+            "workspace-files",
+            "request_hire"
+          ],
+          "permissions": [
+            {
+              "tool": "workspace-files",
+              "operations": [
+                "read",
+                "write"
+              ],
+              "resource": null,
+              "credentialRef": null
+            },
+            {
+              "tool": "request_hire",
+              "operations": [
+                "request"
+              ],
+              "resource": null,
+              "credentialRef": null
+            }
+          ],
+          "memory": {
+            "working": true,
+            "episodic": true,
+            "semantic": true,
+            "canonical": true
+          },
+          "learning": {
+            "enabled": true,
+            "cadence": "daily",
+            "autonomousChanges": [
+              "episodic observations"
+            ],
+            "approvalRequiredChanges": [
+              "canonical policy"
+            ]
+          },
+          "escalation": {
+            "managerId": "human-ceo",
+            "triggers": [
+              "missing evidence",
+              "budget exhausted"
+            ],
+            "defaultSeverity": "medium"
+          },
+          "budget": {
+            "modelCallsDaily": 20,
+            "externalSpendDaily": 5,
+            "currency": "USD",
+            "maxConcurrentTasks": 2
+          },
+          "observability": {
+            "logs": true,
+            "traces": true,
+            "metrics": true
+          },
+          "standards": [
+            "Cite approved source files; never invent evidence."
+          ],
+          "communication": {
+            "allowedAgentIds": [],
+            "canContactManager": true,
+            "canContactHuman": true
+          },
+          "context": {
+            "companyMission": "Build a reliable AI-native organization.",
+            "teamMission": "Produce verifiable research.",
+            "canonicalMemoryIds": [
+              "memory-standards"
+            ]
+          },
+          "evaluation": {
+            "criteria": [
+              "Every claim has a source"
+            ],
+            "requiredVerificationChecks": [
+              "runtime",
+              "model",
+              "tools",
+              "authentication",
+              "permissions",
+              "memory",
+              "communication",
+              "escalation",
+              "observability",
+              "evaluation",
+              "restart",
+              "end_to_end"
+            ]
+          },
+          "consultant": null
+        }
+      }
+    },
+    {
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "outcome": {
+        "kind": "provision_agent",
+        "steps": [
+          {
+            "name": "workspace",
+            "status": "PASSED",
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "error": null
+          }
+        ],
+        "checks": [
+          {
+            "name": "memory",
+            "passed": true,
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "error": null
+          }
+        ],
+        "resources": [
+          {
+            "id": "resource-workspace",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "type": "workspace",
+            "reference": "agent-research",
+            "status": "AVAILABLE",
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "verification": {
+              "name": "memory",
+              "passed": true,
+              "evidence": {
+                "artifactIds": [
+                  "artifact-report"
+                ],
+                "eventIds": [
+                  "event-verification"
+                ],
+                "taskId": "task-review",
+                "jobId": "job-review",
+                "summary": "Stored report hash and read-back verify the delegated research result."
+              },
+              "error": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "outcome": {
+        "kind": "reconfigure_agent",
+        "steps": [
+          {
+            "name": "workspace",
+            "status": "PASSED",
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "error": null
+          }
+        ],
+        "checks": [
+          {
+            "name": "memory",
+            "passed": true,
+            "evidence": {
+              "artifactIds": [
+                "artifact-report"
+              ],
+              "eventIds": [
+                "event-verification"
+              ],
+              "taskId": "task-review",
+              "jobId": "job-review",
+              "summary": "Stored report hash and read-back verify the delegated research result."
+            },
+            "error": null
+          }
+        ],
+        "resources": [
+          {
+            "id": "resource-workspace",
+            "organizationId": "org-demo",
+            "version": 1,
+            "createdAt": "2026-09-12T10:00:00.000Z",
+            "updatedAt": "2026-09-12T10:00:00.000Z",
+            "agentId": "agent-research",
+            "type": "workspace",
+            "reference": "agent-research",
+            "status": "AVAILABLE",
+            "grants": [
+              {
+                "tool": "workspace-files",
+                "operations": [
+                  "read",
+                  "write"
+                ],
+                "resource": null,
+                "credentialRef": null
+              }
+            ],
+            "verification": {
+              "name": "memory",
+              "passed": true,
+              "evidence": {
+                "artifactIds": [
+                  "artifact-report"
+                ],
+                "eventIds": [
+                  "event-verification"
+                ],
+                "taskId": "task-review",
+                "jobId": "job-review",
+                "summary": "Stored report hash and read-back verify the delegated research result."
+              },
+              "error": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "outcome": {
+        "kind": "run_task",
+        "evidence": {
+          "artifactIds": [
+            "artifact-report"
+          ],
+          "eventIds": [
+            "event-verification"
+          ],
+          "taskId": "task-review",
+          "jobId": "job-review",
+          "summary": "Stored report hash and read-back verify the delegated research result."
+        },
+        "summary": "Completed the source review.",
+        "reply": "The report is ready for review."
+      }
+    },
+    {
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "outcome": {
+        "kind": "learn",
+        "learning": {
+          "observation": "Source validation found a missing attachment.",
+          "hypothesis": "Checking attachments before drafting avoids unsupported conclusions.",
+          "conclusion": "Validate source availability before drafting.",
+          "evidence": {
+            "artifactIds": [
+              "artifact-report"
+            ],
+            "eventIds": [
+              "event-verification"
+            ],
+            "taskId": "task-review",
+            "jobId": "job-review",
+            "summary": "Stored report hash and read-back verify the delegated research result."
+          },
+          "memoryIds": [
+            "memory-finding"
+          ],
+          "canonicalRevisionId": null
+        }
+      }
+    },
+    {
+      "leaseToken": "lease-token-example",
+      "attempt": 1,
+      "outcome": {
+        "kind": "retire_agent",
+        "evidence": {
+          "artifactIds": [
+            "artifact-report"
+          ],
+          "eventIds": [
+            "event-verification"
+          ],
+          "taskId": "task-review",
+          "jobId": "job-review",
+          "summary": "Stored report hash and read-back verify the delegated research result."
+        },
+        "credentialsRevoked": true,
+        "runtimeDisabled": true,
+        "knowledgePreserved": true,
+        "activeTasksResolved": true
+      }
+    }
+  ],
+  "idleClaim": {
+    "data": null
+  }
+}

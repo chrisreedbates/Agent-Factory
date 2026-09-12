@@ -1,3 +1,6 @@
 packages:
   - apps/*
   - packages/*
+  - db
+allowBuilds:
+  esbuild: true
