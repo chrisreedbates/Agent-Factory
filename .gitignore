@@ -1,9 +1,4 @@
-node_modules/
-dist/
-.env
-.env.*
-!.env.example
-coverage/
-artifacts/
-.sources/
-*.tsbuildinfo
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/
