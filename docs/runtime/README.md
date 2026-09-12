@@ -42,10 +42,10 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 | Kind | Behaviour |
 | --- | --- |
 | `compile_manifest` | The real model drafts the narrative role; structural fields (team, manager, tools, grants, budget) come from the governance proposal. The assembled manifest is validated against the shared `AgentManifest` schema. |
-| `provision_agent` / `reconfigure_agent` | Runs real probes for the mandatory checks and returns `steps`, `checks` and `resources`. |
-| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. The agent's scoped memory is retrieved and given to the model, and a published deliverable plus a reply are required. |
+| `provision_agent` / `reconfigure_agent` | Runs the real mandatory checks and returns `steps`, `checks` and `resources`. If the control plane refuses a delegated verification (see the boundary section below), the worker publishes a blocked diagnostic and fails closed instead of activating the agent. |
+| `run_task` | A bounded model/tool loop over the granted `workspace-files` tools, plus `request_hire` when granted. The agent's scoped memory is retrieved and given to the model, and completion requires a grounded evaluation gate over the persisted deliverable. |
 | `learn` | The model proposes one grounded lesson from prior persisted evidence; the worker persists an artifact and the agent's own episodic memory whose provenance is the prior evidence, not itself. |
-| `retire_agent` | Verifies durable knowledge by reading it back, writes and re-reads a runtime-disable marker, transfers consultant knowledge to `knowledgeRecipientIds`, and publishes a retirement record. |
+| `retire_agent` | Verifies durable knowledge by reading it back, writes and re-reads a runtime-disable marker, copies the authorized knowledge bytes (with provenance and scope) into each `knowledgeRecipientIds` workspace and verifies retrieval as that recipient, then publishes a retirement record. |
 
 **Budget.** Every non-retirement job reserves before model or tool execution and settles afterwards. Model/tool observations require an outstanding reservation, and completion requires settled usage with no outstanding reservation for the attempt.
 
@@ -53,7 +53,7 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 
 **Enforcement.** The model's tool calls are never trusted. Every call must name a tool that was offered for this attempt, pass argument validation, happen under a live lease, and still be granted by the control plane (`getAgent` is re-read immediately before the operation for `run_task`/`learn`). Undeclared, revoked or cancelled operations abort or are refused, never executed. The lease `AbortSignal` is threaded through the tool loop into the provider request, so a lost lease cancels an in-flight model call instead of billing it.
 
-**Evidence.** Task, learning and verification outcomes reference persisted artifact and event IDs from the same agent, job and attempt. The worker cannot fabricate that authority because the API resolves every reference. Task completion requires the model to name a deliverable it actually wrote, that deliverable to verify on read-back, and any approved briefs to have been read.
+**Evidence.** Task, learning and verification outcomes reference persisted artifact and event IDs from the same agent, job and attempt. The worker cannot fabricate that authority because the API resolves every reference. Task completion requires the model to name a deliverable it actually wrote, that deliverable to verify on read-back, any approved briefs to have been read, **and** a grounded evaluation gate that judges the persisted deliverable bytes against the task objective, constraints, deliverable and every `manifest.evaluation.criteria` entry. The gate is given the verified evidence contents and each criterion must be judged exactly once; duplicated, renamed, uncited or failed criteria fail the job with `TASK_EVALUATION_FAILED`.
 
 ## Verification checks
 
@@ -63,12 +63,18 @@ Provisioning reports all mandatory check names: `runtime`, `model`, `tools`, `au
 - `model` — the model must echo a fresh nonce exactly, so partial or negated replies fail.
 - `tools` / `permissions` — real reads of the agent's scoped briefs (`<sourceRoot>/<agentId>`), symlink-safe directory listing, a denied cross-agent read and allowlist validation.
 - `authentication` — the control plane must reject a forged worker credential (401) while accepting the current lease.
-- `communication` / `escalation` — the agent must send a real message through `POST /v1/messages` and a policy-approved escalation through `POST /v1/escalations`; the check passes only when the control plane actually persisted them, otherwise the agent stays `REMEDIATING`.
-- `evaluation` — a real model judgement that must apply every `manifest.evaluation.criteria` entry and cite persisted evidence from the attempt; the worker rejects uncited or failed criteria.
+- `communication` / `escalation` — the agent attempts a real message through `POST /v1/messages` and a policy-approved escalation through `POST /v1/escalations`; the check passes only when the control plane actually persisted them.
+- `evaluation` — a real model judgement over the persisted evidence. The evaluator is given the verified deliverable bytes and every recorded observation, must judge each `manifest.evaluation.criteria` entry **exactly once** (copied verbatim), and must cite persisted evidence from the attempt; duplicated, renamed, uncited or failed criteria fail the job.
 - `restart` — a **separate process** re-reads the artifact and must reproduce its SHA-256.
 - `end_to_end` — one real model run that reads an approved brief, writes a deliverable and verifies the read-back hash.
 
 Checks that depend on unavailable integrations fail instead of passing: external credentials are refused, an unavailable model or a non-compliant provisioning run blocks activation, and the agent stays in `REMEDIATING`.
+
+### Provisioning delegation boundary (fail closed)
+
+The current core contract admits worker delegation only for `run_task` and `learn` jobs, and only for `ACTIVE` agents (`apps/api/src/app.ts`, `apps/api/src/domain.ts`). A `provision_agent` attempt for a not-yet-`ACTIVE` agent is therefore refused with `DELEGATION_FORBIDDEN`, so `communication` and `escalation` cannot pass during provisioning.
+
+The worker does not fabricate them. It attempts the real persisted calls, records a refusal as a **blocked** check (never `passed`), publishes a `provisioning-verification.json` diagnostic listing every check and the blocked ones, and fails the job with `VERIFICATION_BLOCKED`. The agent stays `REMEDIATING`. Once core adds a narrowly scoped, worker-authenticated provisioning-verification capability, the same calls pass and activation proceeds. This boundary is proven against the real API by `a provisioning lease cannot delegate its verification sends` in `apps/api/test/integration.test.ts`.
 
 ## Running
 
@@ -88,4 +94,8 @@ pnpm --filter @agent-factory/worker check
 pnpm --filter @agent-factory/worker test
 ```
 
-Tests use an in-memory control plane that re-applies the API's fencing, reservation and evidence rules, and a scripted model. They cover enforced tool dispatch, real deliverable validation, lease-loss abort, grounded learning and refusal to fabricate success. They are orchestration evidence and do **not** prove that a real model or employee works; the real model and tool workflow must still be exercised against a running control plane.
+Tests use an in-memory control plane that mirrors the API's fencing, reservation, evidence **and delegation** rules, plus a scripted model. The double refuses delegated provisioning sends exactly as the real API does, so a test can never pass a forbidden path. Coverage includes enforced tool dispatch, the grounded task and provisioning evaluation gates (rejecting duplicated, renamed and uncited criteria), fail-closed provisioning, real recipient-readable consultant knowledge transfer, lease-loss abort, grounded learning and refusal to fabricate success.
+
+The provisioning delegation boundary is additionally proven against the **real** Fastify/PostgreSQL control plane by `a provisioning lease cannot delegate its verification sends` in `apps/api/test/integration.test.ts`, which claims a live `provision_agent` job and asserts `DELEGATION_FORBIDDEN` for both `/v1/messages` and `/v1/escalations` while the worker's own lease-authenticated surface still works.
+
+These tests are orchestration evidence and do **not** prove that a real model or employee works; the real model and tool workflow must still be exercised against a running control plane.

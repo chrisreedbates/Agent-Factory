@@ -71,8 +71,6 @@ export class FakeControlPlane implements ControlPlane {
   readonly hires: Record<string, any>[] = [];
   readonly messages: Record<string, any>[] = [];
   readonly escalations: Record<string, any>[] = [];
-  /** Set true to simulate a control plane that refuses delegated verification sends. */
-  denyVerificationSend = false;
   readonly completed: { job: ClaimedJob; outcome: JobOutcome; order: number }[] = [];
   readonly failed: { job: ClaimedJob; code: string; message: string; retryable: boolean; order: number }[] = [];
   readonly ops: string[] = [];
@@ -81,7 +79,7 @@ export class FakeControlPlane implements ControlPlane {
     { tool: 'workspace-files', operations: ['read', 'write', 'list'], resource: null, credentialRef: null },
     { tool: 'request_hire', operations: ['request'], resource: null, credentialRef: null },
   ];
-  agentState: Record<string, any> = { cancellationRequested: false };
+  agentState: Record<string, any> = { cancellationRequested: false, active: true };
   /** Prior visible memory used to ground learning. */
   memoryEntries: Record<string, any>[] = [];
   rejectForgedCredential = true;
@@ -212,14 +210,19 @@ export class FakeControlPlane implements ControlPlane {
       this.hires.push({ id, requestingAgentId: job.agentId, ...body });
       return { id } as T;
     }
-    if (operationId === 'createMessage') {
-      if (this.denyVerificationSend) throw new WorkerError('DELEGATION_FORBIDDEN', 'Only agent task or learning execution may act as an agent', false);
-      const id = this.nextId('message');
-      this.messages.push({ id, agentId: job.agentId, attempt: job.attempt, ...body });
-      return { id } as T;
-    }
-    if (operationId === 'createEscalation') {
-      if (this.denyVerificationSend) throw new WorkerError('AGENT_INACTIVE', 'Only ACTIVE agents may start work', false);
+    if (operationId === 'createMessage' || operationId === 'createEscalation') {
+      // Faithful to apps/api/src/app.ts: delegation is admitted only for run_task
+      // and learn jobs, and the delegated actor must be ACTIVE. A provisioning
+      // job is therefore always refused, so tests cannot pass a forbidden path.
+      if (!['run_task', 'learn'].includes(job.kind)) {
+        throw new WorkerError('DELEGATION_FORBIDDEN', 'Only agent task or learning execution may act as an agent', false);
+      }
+      if (!this.agentState.active) throw new WorkerError('AGENT_INACTIVE', 'Only ACTIVE agents may start work', false);
+      if (operationId === 'createMessage') {
+        const id = this.nextId('message');
+        this.messages.push({ id, agentId: job.agentId, attempt: job.attempt, ...body });
+        return { id } as T;
+      }
       const id = this.nextId('escalation');
       this.escalations.push({ id, agentId: job.agentId, attempt: job.attempt, ...body });
       return { id } as T;

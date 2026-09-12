@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentManifest, validateResponse } from '@agent-factory/contracts';
@@ -51,6 +52,11 @@ function guardFor(job: ClaimedJob) {
 /** Drives a tool loop: read the brief, write a deliverable, then return the final JSON object. */
 function agentLoopModel(final: Record<string, unknown>, deliverable: string, content = '# Report\nGrounded in brief.md.') {
   return new FakeModel(input => {
+    if (input.system.includes('evaluation gate')) {
+      const payload = JSON.parse(String(input.messages.at(-1)?.content ?? '{}')) as { criteria?: string[]; evidence?: { id: string }[] };
+      const evidenceId = (payload.evidence ?? [{ id: 'missing' }])[0]!.id;
+      return { content: JSON.stringify({ passed: true, deliverableMatches: true, objectiveAddressed: true, constraintsSatisfied: true, criteria: (payload.criteria ?? []).map(criterion => ({ criterion, passed: true, evidenceIds: [evidenceId] })) }) };
+    }
     const toolResults = input.messages.filter(message => message.role === 'tool').length;
     if (toolResults === 0) return { toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { root: 'briefs', path: 'brief.md' } }] };
     if (toolResults === 1) return { toolCalls: [{ id: 'call-write', name: 'write_file', arguments: { path: deliverable, content } }] };
@@ -77,8 +83,8 @@ test('run_task reads a source, writes a deliverable, verifies read-back and sett
     assert.equal(outcome.summary, 'Wrote the cited report.');
     assert.equal(outcome.reply, 'The report is ready.');
     assert.ok(rig.client.ops.indexOf('settleBudget') < rig.client.ops.indexOf('completeJob'));
-    // The model had to read a source before writing.
-    assert.equal(model.calls.length, 3);
+    // The model had to read a source before writing, then the evaluation gate ran.
+    assert.equal(model.calls.length, 4);
     assert.ok(model.calls[1].messages.some(message => message.role === 'tool'));
     for (const artifact of rig.client.artifacts) assert.match(artifact.path, /^agent-1\/job-run_task\/1\//);
   } finally {
@@ -177,15 +183,15 @@ test('compilation fails on unsupported requested tools instead of silently dropp
   }
 });
 
-test('provisioning runs a real verified workflow and emits every mandatory check', async () => {
+test('provisioning verifies the real runtime and fails closed on the core delegation boundary', async () => {
   const model = new FakeModel(input => {
     if (input.system.includes('self-check')) {
       const last = input.messages.at(-1);
       return { content: last && last.role === 'user' ? last.content : '' };
     }
     if (input.system.includes('evaluate a provisioning run')) {
-      const payload = JSON.parse(String(input.messages.at(-1)?.content ?? '{}')) as { criteria?: string[]; evidenceIds?: string[] };
-      const evidenceId = (payload.evidenceIds ?? ['missing'])[0];
+      const payload = JSON.parse(String(input.messages.at(-1)?.content ?? '{}')) as { criteria?: string[]; evidence?: { id: string }[] };
+      const evidenceId = (payload.evidence ?? [{ id: 'missing' }])[0]!.id;
       return { content: JSON.stringify({ passed: true, criteria: (payload.criteria ?? []).map(criterion => ({ criterion, passed: true, evidenceIds: [evidenceId] })) }) };
     }
     const toolResults = input.messages.filter(message => message.role === 'tool').length;
@@ -201,47 +207,30 @@ test('provisioning runs a real verified workflow and emits every mandatory check
   const rig = await makeRig(model);
   try {
     const job = makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 });
-    await runJob(rig, job);
-
-    const outcome = rig.client.completed.at(-1)!.outcome as any;
-    assert.equal(outcome.kind, 'provision_agent', JSON.stringify(rig.client.failed));
-    const names = outcome.checks.map((check: any) => check.name);
-    for (const required of REQUIRED_VERIFICATION_CHECKS) assert.ok(names.includes(required), `missing verification: ${required}`);
-    assert.ok(outcome.checks.every((check: any) => check.passed && check.error === null));
-    assert.ok(outcome.steps.length >= outcome.checks.length);
-    const resourceTypes = outcome.resources.map((resource: any) => resource.type);
-    assert.ok(resourceTypes.includes('workspace'));
-    assert.ok(resourceTypes.includes('runtime'));
-    assert.ok(rig.client.ops.indexOf('settleBudget') < rig.client.ops.indexOf('completeJob'));
-    assert.ok(rig.client.ops.includes('probeUnauthorized'), 'authentication is a real boundary probe');
-    // Communication and escalation go through real persisted control-plane paths.
-    assert.equal(rig.client.messages.length, 1, 'a real message must be persisted');
-    assert.equal(rig.client.escalations.length, 1, 'a real escalation must be persisted');
-    assert.ok(rig.client.ops.includes('createMessage'));
-    assert.ok(rig.client.ops.includes('createEscalation'));
-  } finally {
-    await rig.cleanup();
-  }
-});
-
-test('a control plane that refuses the verification send leaves the agent remediating', async () => {
-  const model = new FakeModel(input => {
-    if (input.system.includes('self-check')) {
-      const last = input.messages.at(-1);
-      return { content: last && last.role === 'user' ? last.content : '' };
-    }
-    const toolResults = input.messages.filter(message => message.role === 'tool').length;
-    if (toolResults === 0) return { toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { root: 'briefs', path: 'brief.md' } }] };
-    if (toolResults === 1) return { toolCalls: [{ id: 'call-write', name: 'write_file', arguments: { path: 'provision-report.md', content: '# Report' } }] };
-    return { content: JSON.stringify({ summary: 'done', reply: 'verified', deliverable: 'provision-report.md', escalation: { trigger: 'missing evidence', situation: 's', recommendation: 'r' } }) };
-  });
-  const rig = await makeRig(model);
-  try {
-    rig.client.denyVerificationSend = true;
-    rig.client.queue.push(makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    rig.client.queue.push(job);
     assert.equal(await rig.runtime.runOnce(), true);
-    assert.equal(rig.client.completed.length, 0);
-    assert.equal(rig.client.failed.at(-1)!.code, 'COMMUNICATION_UNVERIFIED');
+
+    // The worker exercises the real local runtime, but never claims activation.
+    assert.equal(rig.client.completed.length, 0, 'provisioning must not report success on a forbidden path');
+    assert.equal(rig.client.failed.at(-1)!.code, 'VERIFICATION_BLOCKED');
+    assert.ok(rig.client.ops.includes('probeUnauthorized'), 'authentication is a real boundary probe');
+    assert.ok(rig.client.ops.includes('createMessage'), 'the worker must attempt the real delegated send');
+    assert.ok(rig.client.ops.includes('createEscalation'));
+    assert.equal(rig.client.messages.length, 0, 'the double mirrors the API and refuses the delegated send');
+    assert.equal(rig.client.escalations.length, 0);
+
+    // A diagnostic records every check, including exactly the blocked ones.
+    const diagnostic = rig.client.artifacts.find(artifact => artifact.path.endsWith('provisioning-verification.json'));
+    assert.ok(diagnostic, 'a blocked diagnostic must be published');
+    const report = JSON.parse(await readFile(rig.workspace.absoluteArtifactPath(diagnostic!.path), 'utf8')) as any;
+    assert.equal(report.status, 'BLOCKED');
+    assert.deepEqual([...report.blocked].map((entry: any) => entry.name).sort(), ['communication', 'escalation']);
+    assert.deepEqual(report.checks.filter((check: any) => !check.passed).map((check: any) => check.name).sort(), ['communication', 'escalation']);
+    const passedNames = new Set(report.checks.filter((check: any) => check.passed).map((check: any) => check.name));
+    for (const required of REQUIRED_VERIFICATION_CHECKS) {
+      if (required === 'communication' || required === 'escalation') continue;
+      assert.ok(passedNames.has(required), `missing local verification: ${required}`);
+    }
   } finally {
     await rig.cleanup();
   }
@@ -330,7 +319,18 @@ test('retirement performs and verifies cleanup and consultant knowledge transfer
     assert.ok(outcome.evidence.artifactIds.length >= 1);
     // The retirement marker and the transferred knowledge really exist on disk.
     assert.match(await rig.workspace.read('workspace', 'agent-1', 'runtime-disabled.json'), /disabledAt/);
-    assert.match(await rig.workspace.read('workspace', 'agent-2', 'consultant-transfer/agent-1/index.json'), /working\.json/);
+
+    // The recipient receives the actual knowledge bytes, not just a path index.
+    const transferIndex = JSON.parse(await rig.workspace.read('workspace', 'agent-2', 'consultant-transfer/agent-1/index.json')) as any;
+    assert.equal(transferIndex.scope, 'private');
+    assert.equal(transferIndex.from, 'agent-1');
+    assert.equal(transferIndex.knowledge.length, 1);
+    const entry = transferIndex.knowledge[0];
+    assert.equal(entry.sourcePath, 'memory/working.json');
+    assert.equal(entry.from, 'agent-1');
+    assert.equal(entry.sha256, createHash('sha256').update('{"lesson":"keep me"}').digest('hex'));
+    const copied = await rig.workspace.read('workspace', 'agent-2', `consultant-transfer/agent-1/knowledge/${entry.name}`);
+    assert.equal(copied, '{"lesson":"keep me"}', 'the recipient must be able to read the transferred content itself');
   } finally {
     await rig.cleanup();
   }
@@ -363,6 +363,67 @@ test('run_task includes retrieved scoped memory in the model context', async () 
     assert.equal(rig.client.failed.length, 0, JSON.stringify(rig.client.failed));
     const prompt = String(model.calls[0].messages[0].content ?? '');
     assert.match(prompt, /ALWAYS cite the approved brief\./);
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('provisioning rejects an evaluation that duplicates or invents criteria', async () => {
+  const model = new FakeModel(input => {
+    if (input.system.includes('self-check')) {
+      const last = input.messages.at(-1);
+      return { content: last && last.role === 'user' ? last.content : '' };
+    }
+    if (input.system.includes('evaluate a provisioning run')) {
+      const payload = JSON.parse(String(input.messages.at(-1)?.content ?? '{}')) as { criteria?: string[]; evidence?: { id: string }[] };
+      const evidenceId = (payload.evidence ?? [{ id: 'missing' }])[0]!.id;
+      const criterion = (payload.criteria ?? ['missing'])[0]!;
+      // Two judgements for one criterion and one renamed criterion.
+      return { content: JSON.stringify({ passed: true, criteria: [
+        { criterion, passed: true, evidenceIds: [evidenceId] },
+        { criterion, passed: true, evidenceIds: [evidenceId] },
+        { criterion: 'A criterion nobody requested', passed: true, evidenceIds: [evidenceId] },
+      ] }) };
+    }
+    const toolResults = input.messages.filter(message => message.role === 'tool').length;
+    if (toolResults === 0) return { toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { root: 'briefs', path: 'brief.md' } }] };
+    if (toolResults === 1) return { toolCalls: [{ id: 'call-write', name: 'write_file', arguments: { path: 'provision-report.md', content: '# Report' } }] };
+    return { content: JSON.stringify({ summary: 'done', reply: 'verified', deliverable: 'provision-report.md', escalation: { trigger: 'missing evidence', situation: 's', recommendation: 'r' } }) };
+  });
+  const rig = await makeRig(model);
+  try {
+    rig.client.queue.push(makeJob('provision_agent', { agent: makeAgent({ status: 'PROVISIONING' }), manifest: makeManifest(), manifestVersion: 1 }));
+    assert.equal(await rig.runtime.runOnce(), true);
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'EVALUATION_FAILED');
+  } finally {
+    await rig.cleanup();
+  }
+});
+
+test('run_task refuses completion when the deliverable does not satisfy the task', async () => {
+  const model = new FakeModel(input => {
+    if (input.system.includes('evaluation gate')) {
+      const payload = JSON.parse(String(input.messages.at(-1)?.content ?? '{}')) as { criteria?: string[]; evidence?: { id: string }[] };
+      const evidenceId = (payload.evidence ?? [{ id: 'missing' }])[0]!.id;
+      return { content: JSON.stringify({ passed: true, deliverableMatches: false, objectiveAddressed: true, constraintsSatisfied: true,
+        criteria: (payload.criteria ?? []).map(criterion => ({ criterion, passed: true, evidenceIds: [evidenceId] })) }) };
+    }
+    const toolResults = input.messages.filter(message => message.role === 'tool').length;
+    if (toolResults === 0) return { toolCalls: [{ id: 'call-read', name: 'read_file', arguments: { root: 'briefs', path: 'brief.md' } }] };
+    if (toolResults === 1) return { toolCalls: [{ id: 'call-write', name: 'write_file', arguments: { path: 'report.md', content: 'Unrelated bytes.' } }] };
+    return { content: JSON.stringify({ summary: 'Wrote something.', reply: 'done', deliverable: 'report.md' }) };
+  });
+  const rig = await makeRig(model);
+  try {
+    rig.client.queue.push(makeJob('run_task', {
+      agent: makeAgent(),
+      task: { id: 'task-1', objective: 'Write a cited report', constraints: [], deliverable: 'report.md', deadline: null },
+      inputMessage: null,
+    }, { taskId: 'task-1' }));
+    assert.equal(await rig.runtime.runOnce(), true);
+    assert.equal(rig.client.completed.length, 0);
+    assert.equal(rig.client.failed.at(-1)!.code, 'TASK_EVALUATION_FAILED');
   } finally {
     await rig.cleanup();
   }

@@ -35,7 +35,7 @@ still requires a running API, a real model credential and the integrated console
 | Runtime exists and selected model works | Real model adapter used by compilation, execution and learning; a strict nonce self-check verifies reachability | An actual model call observed through the running worker and control plane |
 | Required tools, authentication and permissions work | Only supported local capabilities are granted; tool observations require a matching grant | Effective permission checks with the live API lease |
 | Memory works | Initializes agent-scoped memory with verbatim read-back; agents write their own episodic memory with provenance | Restart the API and worker and recover the persisted memory |
-| Communication and escalation work | Replies to the originating message and routes escalation to the approved manager | Real manager/requester messages and terminal escalation resolution |
+| Communication and escalation work | Replies to the originating message and routes escalation to the approved manager; provisioning verification attempts the real persisted paths and fails closed when core refuses delegation | A core-owned provisioning-verification capability, then a live provisioning run that reaches `ACTIVE` |
 | Logs and observability exist | Emits scoped, sanitized model, tool and verification events for every attempt | Events rendered from the running control plane |
 | Evaluation passes | Evaluates recorded model output against the manifest criteria | An integrated evaluation recorded for a real task |
 | Persistence survives restart | Writes immutable artifacts and durable workspace knowledge, then re-reads them | Restart the processes and recover the actual files |
@@ -45,6 +45,15 @@ No seeded ACTIVE employee, fabricated approval, simulated integration or
 fixture verification substitutes for these. A provisioning outcome is admitted
 only when every mandatory check passes with persisted evidence; an unavailable
 model or credential fails the job and leaves the agent in `REMEDIATING`.
+
+The current core contract forbids delegated worker calls during provisioning
+(`apps/api/src/app.ts` admits delegation only for `run_task`/`learn`, for
+`ACTIVE` agents), so the `communication` and `escalation` checks cannot pass
+yet. The worker attempts the real persisted calls, records a refusal as a
+blocked check, publishes a blocked diagnostic and fails with
+`VERIFICATION_BLOCKED` rather than claiming activation. A real API integration
+test (`a provisioning lease cannot delegate its verification sends`) fixes that
+boundary in place until a core-owned provisioning-verification capability lands.
 
 ## Integration handoff
 
