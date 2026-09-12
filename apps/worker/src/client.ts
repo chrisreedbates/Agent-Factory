@@ -31,6 +31,7 @@ interface RequestInput {
 export type ControlPlane = Pick<
   ControlPlaneClient,
   'claim' | 'renew' | 'appendEvent' | 'publishArtifact' | 'reserveBudget' | 'settleBudget' | 'complete' | 'fail' | 'asAgent'
+  | 'getAgent' | 'listMemory' | 'probeUnauthorized'
 >;
 
 export class ControlPlaneClient {
@@ -163,5 +164,43 @@ export class ControlPlaneClient {
   /** A delegated agent-capable call performed under the current run_task/learn lease. */
   asAgent<T>(job: ClaimedJob, operationId: string, path: string, body: unknown): Promise<T> {
     return this.request<T>(operationId, path, { body, jobId: job.jobId, lease: job, delegated: true });
+  }
+
+  /** Read the agent's live record and current grants under the active lease. */
+  getAgent<T = { agent: Record<string, any>; grants: Record<string, any>[]; resources: Record<string, any>[]; verification: Record<string, any>[] }>(
+    job: ClaimedJob,
+    agentId: string,
+  ): Promise<T> {
+    return this.request<T>('getAgent', `/v1/agents/${encodeURIComponent(agentId)}`, {
+      method: 'GET',
+      jobId: job.jobId,
+      lease: job,
+      delegated: true,
+    });
+  }
+
+  /** Read the agent's currently visible, scoped memory under the active lease. */
+  listMemory(job: ClaimedJob, limit = 50): Promise<Record<string, any>[]> {
+    return this.request<Record<string, any>[]>('listMemory', `/v1/memory?limit=${encodeURIComponent(String(limit))}`, {
+      method: 'GET',
+      jobId: job.jobId,
+      lease: job,
+      delegated: true,
+    });
+  }
+
+  /**
+   * Genuine authentication boundary probe: a forged worker credential must be
+   * rejected with 401 while the real credential holds this lease. Returns true
+   * only when the control plane denies the forged caller.
+   */
+  async probeUnauthorized(jobId: string): Promise<boolean> {
+    const response = await this.fetchImpl(`${this.config.apiBaseUrl}/v1/worker/jobs/${encodeURIComponent(jobId)}/renew`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${'forged-credential-'.padEnd(32, 'x')}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ leaseToken: 'forged-lease', attempt: 1, leaseSeconds: 60 }),
+      signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+    });
+    return response.status === 401;
   }
 }

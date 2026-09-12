@@ -2,7 +2,7 @@ import { REQUIRED_VERIFICATION_CHECKS } from '../src/evidence.js';
 import { EMPTY_USAGE, type ModelAdapter, type ModelMessage, type ModelTurn, type ModelUsage, type ToolCall, type ToolDefinition } from '../src/model.js';
 import { WorkerError } from '../src/errors.js';
 import type { ControlPlane } from '../src/client.js';
-import type { ClaimedJob, Evidence, JobOutcome, PublishedArtifact, Scope, UsageReservation } from '../src/types.js';
+import type { ClaimedJob, Evidence, Grant, JobOutcome, PublishedArtifact, Scope, UsageReservation } from '../src/types.js';
 
 export const PRIVATE_SCOPE: Scope = { visibility: 'private', teamId: null, agentIds: [] };
 
@@ -72,6 +72,16 @@ export class FakeControlPlane implements ControlPlane {
   readonly completed: { job: ClaimedJob; outcome: JobOutcome; order: number }[] = [];
   readonly failed: { job: ClaimedJob; code: string; message: string; retryable: boolean; order: number }[] = [];
   readonly ops: string[] = [];
+  /** Live grants a run_task/learn attempt observes through getAgent. */
+  grants: Grant[] = [
+    { tool: 'workspace-files', operations: ['read', 'write', 'list'], resource: null, credentialRef: null },
+    { tool: 'request_hire', operations: ['request'], resource: null, credentialRef: null },
+  ];
+  agentState: Record<string, any> = { cancellationRequested: false };
+  /** Prior visible memory used to ground learning. */
+  memoryEntries: Record<string, any>[] = [];
+  rejectForgedCredential = true;
+  renewError: Error | null = null;
   private sequence = 0;
 
   private nextId(prefix: string): string {
@@ -104,7 +114,28 @@ export class FakeControlPlane implements ControlPlane {
 
   async renew(): Promise<{ leaseExpiresAt: string }> {
     this.ops.push('renew');
+    if (this.renewError) throw this.renewError;
     return { leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() };
+  }
+
+  async getAgent<T>(_job: ClaimedJob, agentId: string): Promise<T> {
+    this.ops.push('getAgent');
+    return {
+      agent: { id: agentId, ...this.agentState },
+      grants: this.agentState.cancellationRequested ? [] : this.grants,
+      resources: [],
+      verification: [],
+    } as T;
+  }
+
+  async listMemory(_job: ClaimedJob, limit = 50): Promise<Record<string, any>[]> {
+    this.ops.push('listMemory');
+    return this.memoryEntries.slice(0, limit);
+  }
+
+  async probeUnauthorized(): Promise<boolean> {
+    this.ops.push('probeUnauthorized');
+    return this.rejectForgedCredential;
   }
 
   async appendEvent(job: ClaimedJob, input: { type: string; message: string; data: Record<string, unknown> }): Promise<{ id: string }> {
@@ -201,7 +232,10 @@ export class FakeModel implements ModelAdapter {
   readonly calls: { system: string; messages: ModelMessage[]; tools: ToolDefinition[] }[] = [];
   private readonly turns: ScriptedTurn[];
 
-  constructor(turns: ScriptedTurn[] | ((input: { system: string; messages: ModelMessage[] }) => ScriptedTurn)) {
+  constructor(
+    turns: ScriptedTurn[] | ((input: { system: string; messages: ModelMessage[] }) => ScriptedTurn),
+    private readonly options: { delayMs?: number } = {},
+  ) {
     this.turns = typeof turns === 'function' ? [] : turns;
     this.dynamic = typeof turns === 'function' ? turns : null;
   }
@@ -209,6 +243,7 @@ export class FakeModel implements ModelAdapter {
   private dynamic: ((input: { system: string; messages: ModelMessage[] }) => ScriptedTurn) | null;
 
   async turn(input: { system: string; messages: ModelMessage[]; tools?: ToolDefinition[] }): Promise<ModelTurn> {
+    if (this.options.delayMs) await new Promise(resolvePromise => setTimeout(resolvePromise, this.options.delayMs));
     this.calls.push({ system: input.system, messages: input.messages, tools: input.tools ?? [] });
     const next = this.dynamic ? this.dynamic(input) : this.turns.shift();
     if (!next) throw new WorkerError('MODEL_CALL_FAILED', 'fake model ran out of scripted turns', false);

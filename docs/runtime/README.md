@@ -25,7 +25,7 @@ Copy `apps/worker/.env.example` and set values; the worker shares `.env` with th
 | `WORKER_TOKEN` | Distinct worker credential (≥ 32 characters). Never the operator token. |
 | `API_BASE_URL` | Control-plane base URL, e.g. `http://127.0.0.1:3000`. |
 | `ARTIFACT_ROOT` | Read/write root for immutable artifacts. Must be the shared workspace volume. |
-| `SOURCE_ROOT` | Read-only directory of approved source briefs. Never the writable volume. |
+| `SOURCE_ROOT` | Read-only root of per-agent brief directories (`<SOURCE_ROOT>/<agentId>`). Never the writable volume. |
 | `MODEL_NAME` | The configured runtime model. Agent identity is independent of the provider. |
 | `OPENAI_API_KEY` | Model credential. The worker keeps it out of agent manifests. |
 | `OPENAI_BASE_URL` | Optional provider-compatible base URL. |
@@ -51,11 +51,24 @@ The worker claims with `POST /v1/worker/jobs/claim`, then uses the attempt and l
 
 **Artifacts.** Files are written to `<agentId>/<jobId>/<attempt>/<name>`, hashed with SHA-256 and published with the current lease. Accepted artifacts are immutable; the API re-reads and verifies the bytes.
 
-**Evidence.** Task, learning and verification outcomes reference persisted artifact and event IDs from the same agent, job and attempt. The worker cannot fabricate that authority because the API resolves every reference.
+**Enforcement.** The model's tool calls are never trusted. Every call must name a tool that was offered for this attempt, pass argument validation, happen under a live lease, and still be granted by the control plane (`getAgent` is re-read immediately before the operation for `run_task`/`learn`). Undeclared, revoked or cancelled operations abort or are refused, never executed.
+
+**Evidence.** Task, learning and verification outcomes reference persisted artifact and event IDs from the same agent, job and attempt. The worker cannot fabricate that authority because the API resolves every reference. Task completion requires the model to name a deliverable it actually wrote, that deliverable to verify on read-back, and any approved briefs to have been read.
 
 ## Verification checks
 
-Provisioning reports all mandatory check names: `runtime`, `model`, `tools`, `authentication`, `permissions`, `memory`, `communication`, `escalation`, `observability`, `evaluation`, `restart`, `end_to_end`. They are backed by real work where the local deployment allows it — a durable workspace probe, a real model self-check, a real `workspace-files` listing, an agent-scoped memory write with verbatim read-back, and a restart read-back. Checks that depend on external integrations remain explicit blockers: external credentials are refused, and an unavailable model fails the job rather than claiming success.
+Provisioning reports all mandatory check names: `runtime`, `model`, `tools`, `authentication`, `permissions`, `memory`, `communication`, `escalation`, `observability`, `evaluation`, `restart`, `end_to_end`. They are behavioural, not structural:
+
+- `runtime` / `memory` — durable write, read-back and hash comparison, with symlink-safe, exclusively created files.
+- `model` — the model must echo a fresh nonce exactly, so partial or negated replies fail.
+- `tools` / `permissions` — real reads of the agent's scoped briefs plus a denied cross-agent read and allowlist validation.
+- `authentication` — the control plane must reject a forged worker credential (401) while accepting the current lease.
+- `communication` / `escalation` — the model must produce a manager-addressed reply and a policy-approved escalation, both persisted and verified.
+- `evaluation` — a deterministic verdict over the recorded artifacts, persisted before activation.
+- `restart` — a **separate process** re-reads the artifact and must reproduce its SHA-256.
+- `end_to_end` — one real model run that reads an approved brief, writes a deliverable and verifies the read-back hash.
+
+Checks that depend on unavailable integrations fail instead of passing: external credentials are refused, an unavailable model or a non-compliant provisioning run blocks activation, and the agent stays in `REMEDIATING`.
 
 ## Running
 
@@ -75,4 +88,4 @@ pnpm --filter @agent-factory/worker check
 pnpm --filter @agent-factory/worker test
 ```
 
-Tests use an in-memory control plane that re-applies the API's fencing, reservation and evidence rules, and a scripted model. They prove orchestration and refusal to fabricate success; they do **not** prove that a real model or employee works. The real model and tool workflow must still be exercised against a running control plane.
+Tests use an in-memory control plane that re-applies the API's fencing, reservation and evidence rules, and a scripted model. They cover enforced tool dispatch, real deliverable validation, lease-loss abort, grounded learning and refusal to fabricate success. They are orchestration evidence and do **not** prove that a real model or employee works; the real model and tool workflow must still be exercised against a running control plane.

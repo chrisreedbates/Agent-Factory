@@ -17,9 +17,11 @@ pnpm --filter @agent-factory/worker test
 The worker suite runs an in-memory control plane that re-applies the API's
 fencing, reservation and evidence-resolution rules, plus a scripted model. The
 tests establish that the worker reserves before execution, settles before
-completion, publishes immutable scoped artifacts, reports every mandatory
-verification check with resolvable evidence, and **fails** a job when the
-configured model is unavailable instead of reporting simulated success.
+completion, publishes immutable scoped artifacts, revalidates every model tool
+call against the offered set and current grants, requires a named deliverable
+that verifies on read-back, aborts the attempt when lease renewal is lost, and
+**fails** a job when the configured model is unavailable instead of reporting
+simulated success.
 
 Those tests are orchestration evidence. They are not proof that a real model, a
 real integration or an operational employee works. The whole-system workflow
@@ -30,7 +32,7 @@ still requires a running API, a real model credential and the integrated console
 | Definition of Done item | Machine 2 responsibility | Evidence still required |
 | --- | --- | --- |
 | Manifest and organizational position exist | Compiles the proposal into a schema-validated manifest without changing identity, team or manager | A human approval binding the exact compiled version through the live flow |
-| Runtime exists and selected model works | Real model adapter used by compilation, execution and learning; a self-check verifies reachability | An actual model call observed through the running worker and control plane |
+| Runtime exists and selected model works | Real model adapter used by compilation, execution and learning; a strict nonce self-check verifies reachability | An actual model call observed through the running worker and control plane |
 | Required tools, authentication and permissions work | Only supported local capabilities are granted; tool observations require a matching grant | Effective permission checks with the live API lease |
 | Memory works | Initializes agent-scoped memory with verbatim read-back; agents write their own episodic memory with provenance | Restart the API and worker and recover the persisted memory |
 | Communication and escalation work | Replies to the originating message and routes escalation to the approved manager | Real manager/requester messages and terminal escalation resolution |

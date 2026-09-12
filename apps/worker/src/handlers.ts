@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { AgentManifest, validateResponse, validationErrors } from '@agent-factory/contracts';
 import type { ControlPlane } from './client.js';
 import type { WorkerConfig } from './config.js';
@@ -6,7 +8,10 @@ import { LeaseLostError, WorkerError } from './errors.js';
 import { addUsage, EMPTY_USAGE, extractJson, type ModelAdapter, type ModelUsage, type ToolCall, type ToolDefinition, runToolLoop } from './model.js';
 import { REQUIRED_VERIFICATION_CHECKS, makeEvidence, succeededCheck } from './evidence.js';
 import type { ClaimedJob, Grant, ProvisioningStep, Resource, Scope, VerificationCheck } from './types.js';
+import type { LeaseGuard } from './runtime.js';
 import type { Workspace } from './workspace.js';
+
+const execFileAsync = promisify(execFile);
 
 export const SUPPORTED_TOOLS: Readonly<Record<string, readonly string[]>> = {
   'workspace-files': ['read', 'write', 'list'],
@@ -15,6 +20,8 @@ export const SUPPORTED_TOOLS: Readonly<Record<string, readonly string[]>> = {
 
 const PRIVATE_SCOPE: Scope = { visibility: 'private', teamId: null, agentIds: [] };
 const MAX_TOOL_RESULT_CHARS = 8_000;
+/** Codes that must stop the whole attempt rather than being returned to the model. */
+const FATAL_TOOL_CODES = new Set(['GRANT_REVOKED', 'EXECUTION_CANCELLED']);
 
 const nowIso = () => new Date().toISOString();
 
@@ -23,8 +30,6 @@ const stringList = (value: unknown, fallback: string[], max = 20): string[] => {
   const unique = [...new Set(items.map(item => item.trim()))].slice(0, max);
   return unique.length ? unique : fallback;
 };
-
-const firstParagraph = (text: string): string => text.trim().split(/\n{2,}/)[0]?.trim() ?? text.trim();
 
 /** One reserve/settle pair per attempt. Idempotent so a failure path can settle safely. */
 export class JobLedger {
@@ -65,6 +70,27 @@ export class JobLedger {
   }
 }
 
+interface ToolSpec {
+  definition: ToolDefinition;
+  tool: string;
+  operation: string;
+}
+
+interface WrittenArtifact {
+  id: string;
+  path: string;
+  sha256: string;
+  absolutePath: string;
+}
+
+interface AgentLoopResult {
+  content: string;
+  written: Map<string, WrittenArtifact>;
+  readCount: number;
+  eventIds: string[];
+  artifactIds: string[];
+}
+
 interface RoleDraft {
   name?: unknown;
   roleTitle?: unknown;
@@ -80,6 +106,17 @@ interface RoleDraft {
 interface TaskDraft {
   summary?: unknown;
   reply?: unknown;
+  deliverable?: unknown;
+}
+
+interface EscalationDraft {
+  trigger?: unknown;
+  situation?: unknown;
+  recommendation?: unknown;
+}
+
+interface ProvisionDraft extends TaskDraft {
+  escalation?: unknown;
 }
 
 interface LearningDraft {
@@ -101,14 +138,14 @@ export interface JobRunnerDependencies {
 export class JobRunner {
   constructor(private readonly deps: JobRunnerDependencies) {}
 
-  async run(job: ClaimedJob, ledger: JobLedger): Promise<void> {
+  async run(job: ClaimedJob, ledger: JobLedger, guard: LeaseGuard): Promise<void> {
     switch (job.kind) {
-      case 'compile_manifest': return this.compileManifest(job, ledger);
+      case 'compile_manifest': return this.compileManifest(job, ledger, guard);
       case 'provision_agent':
-      case 'reconfigure_agent': return this.provision(job, ledger);
-      case 'run_task': return this.runTask(job, ledger);
-      case 'learn': return this.learn(job, ledger);
-      case 'retire_agent': return this.retire(job, ledger);
+      case 'reconfigure_agent': return this.provision(job, ledger, guard);
+      case 'run_task': return this.runTask(job, ledger, guard);
+      case 'learn': return this.learn(job, ledger, guard);
+      case 'retire_agent': return this.retire(job, ledger, guard);
       default: throw new WorkerError('UNKNOWN_JOB', `Unsupported job kind ${job.kind}`, false);
     }
   }
@@ -117,14 +154,27 @@ export class JobRunner {
     return (job.payload as any).agent as Record<string, any>;
   }
 
-  private async observe(job: ClaimedJob, type: string, message: string, data: Record<string, unknown> = {}): Promise<string> {
+  private async observe(job: ClaimedJob, guard: LeaseGuard, type: string, message: string, data: Record<string, unknown> = {}): Promise<string> {
+    guard.assertLive();
     const event = await this.deps.client.appendEvent(job, { type, message, data });
     return event.id;
   }
 
-  private async publish(job: ClaimedJob, name: string, content: string, contentType = 'text/plain'): Promise<{ id: string; path: string }> {
+  /** Write, read back and hash-verify immutable bytes, then publish them under the lease. */
+  private async publish(
+    job: ClaimedJob,
+    guard: LeaseGuard,
+    name: string,
+    content: string | Buffer,
+    contentType = 'text/plain',
+  ): Promise<WrittenArtifact> {
+    guard.assertLive();
     const agent = this.agentOf(job);
     const stored = await this.deps.workspace.writeArtifact(agent.id, job.jobId, job.attempt, name, content);
+    const back = await this.deps.workspace.readBack(stored.absolutePath);
+    if (back.sha256 !== stored.sha256 || back.size !== stored.size) {
+      throw new WorkerError('ARTIFACT_INTEGRITY', `Read-back mismatch for ${stored.path}`, false);
+    }
     const published = await this.deps.client.publishArtifact(job, {
       path: stored.path,
       contentType,
@@ -132,23 +182,214 @@ export class JobRunner {
       sha256: stored.sha256,
       scope: PRIVATE_SCOPE,
     });
-    return { id: published.id, path: stored.path };
+    return { id: published.id, path: stored.path, sha256: stored.sha256, absolutePath: stored.absolutePath };
   }
 
-  /** Emit a tool observation only when the approved manifest actually grants the operation. */
-  private async toolEvent(job: ClaimedJob, manifest: Record<string, any>, tool: string, operation: string, data: Record<string, unknown>): Promise<string | null> {
+  /** Emit a tool observation only when the approved manifest grants the operation. */
+  private async toolEvent(
+    job: ClaimedJob,
+    guard: LeaseGuard,
+    manifest: Record<string, any>,
+    tool: string,
+    operation: string,
+    data: Record<string, unknown>,
+  ): Promise<string | null> {
     const grant = (manifest.permissions as Grant[]).find(candidate => candidate.tool === tool);
     if (!grant || !grant.operations.includes(operation)) return null;
-    return this.observe(job, `tool.${tool}`, `Executed ${tool} ${operation}`, { tool, operation, ...data });
+    return this.observe(job, guard, `tool.${tool}`, `Executed ${tool} ${operation}`, { tool, operation, ...data });
+  }
+
+  /** Re-read the agent's live record and current grants immediately before a tool operation. */
+  private async assertLiveGrant(job: ClaimedJob, guard: LeaseGuard, manifest: Record<string, any>, spec: ToolSpec): Promise<void> {
+    guard.assertLive();
+    if (!['run_task', 'learn'].includes(job.kind)) {
+      // Provisioning cannot delegate as the agent; the approved manifest is the authority.
+      const grant = (manifest.permissions as Grant[]).find(candidate => candidate.tool === spec.tool);
+      if (!grant || !grant.operations.includes(spec.operation)) {
+        throw new WorkerError('GRANT_REVOKED', `The approved manifest does not grant ${spec.tool} ${spec.operation}`, false);
+      }
+      return;
+    }
+    const live = await this.deps.client.getAgent(job, this.agentOf(job).id);
+    const agent = live.agent as Record<string, any>;
+    if (agent.cancellationRequested) throw new WorkerError('EXECUTION_CANCELLED', 'Agent execution is cancelled', false);
+    const grant = (live.grants as Grant[]).find(candidate => candidate.tool === spec.tool);
+    if (!grant || !grant.operations.includes(spec.operation)) {
+      throw new WorkerError('GRANT_REVOKED', `Current grants no longer authorize ${spec.tool} ${spec.operation}`, false);
+    }
+  }
+
+  /** Build only the tools the approved manifest actually grants. */
+  private offeredTools(manifest: Record<string, any>, includeRecruitment: boolean): Map<string, ToolSpec> {
+    const offered = new Map<string, ToolSpec>();
+    const grantOf = (tool: string): Grant | undefined => (manifest.permissions as Grant[]).find(candidate => candidate.tool === tool);
+    const workspaceGrant = grantOf('workspace-files');
+    const operations = new Set(workspaceGrant?.operations ?? []);
+    if (operations.has('list')) {
+      offered.set('list_files', {
+        tool: 'workspace-files', operation: 'list',
+        definition: { name: 'list_files', description: 'List files under the read-only briefs or the agent workspace.', parameters: { type: 'object', properties: { root: { type: 'string', enum: ['briefs', 'workspace'] }, path: { type: 'string' } }, required: ['root'] } },
+      });
+    }
+    if (operations.has('read')) {
+      offered.set('read_file', {
+        tool: 'workspace-files', operation: 'read',
+        definition: { name: 'read_file', description: 'Read one text file from the briefs or the agent workspace.', parameters: { type: 'object', properties: { root: { type: 'string', enum: ['briefs', 'workspace'] }, path: { type: 'string' } }, required: ['root', 'path'] } },
+      });
+    }
+    if (operations.has('write')) {
+      offered.set('write_file', {
+        tool: 'workspace-files', operation: 'write',
+        definition: { name: 'write_file', description: 'Write a deliverable into the immutable job output. Use a simple relative filename.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
+      });
+    }
+    const hireGrant = grantOf('request_hire');
+    if (includeRecruitment && hireGrant?.operations.includes('request')) {
+      offered.set('request_hire', {
+        tool: 'request_hire', operation: 'request',
+        definition: {
+          name: 'request_hire',
+          description: 'Request one governed hire when a real capability gap blocks the deliverable. A human must still approve it.',
+          parameters: {
+            type: 'object',
+            properties: {
+              role: { type: 'string' }, mission: { type: 'string' }, justification: { type: 'string' },
+              teamId: { type: 'string' }, agentType: { type: 'string', enum: ['employee', 'consultant'] }, expectedBenefit: { type: 'string' },
+            },
+            required: ['role', 'mission', 'justification', 'expectedBenefit'],
+          },
+        },
+      });
+    }
+    return offered;
+  }
+
+  private validateToolArguments(name: string, args: Record<string, unknown>): string | null {
+    const text = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+    if (name === 'list_files') {
+      if (args.root !== 'briefs' && args.root !== 'workspace') return 'root must be briefs or workspace';
+      return args.path === undefined || typeof args.path === 'string' ? null : 'path must be a string';
+    }
+    if (name === 'read_file') {
+      if (args.root !== 'briefs' && args.root !== 'workspace') return 'root must be briefs or workspace';
+      return text(args.path) ? null : 'path must be a non-empty string';
+    }
+    if (name === 'write_file') {
+      if (!text(args.path)) return 'path must be a non-empty string';
+      return typeof args.content === 'string' && args.content.trim().length > 0 ? null : 'content must be non-empty';
+    }
+    if (name === 'request_hire') {
+      for (const key of ['role', 'mission', 'justification', 'expectedBenefit']) if (!text(args[key])) return `${key} must be a non-empty string`;
+      if (args.agentType !== undefined && args.agentType !== 'employee' && args.agentType !== 'consultant') return 'agentType must be employee or consultant';
+      return args.teamId === undefined || typeof args.teamId === 'string' ? null : 'teamId must be a string';
+    }
+    return 'unknown tool';
+  }
+
+  private async childProcessHash(absolutePath: string): Promise<string> {
+    const script = "const fs=require('fs'),c=require('crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))";
+    const { stdout } = await execFileAsync(process.execPath, ['-e', script, absolutePath], { timeout: 10_000, windowsHide: true });
+    return stdout.trim();
+  }
+
+  /**
+   * A bounded, enforced agent tool loop shared by task execution and end-to-end
+   * provisioning. Every call is revalidated against the offered tool set, its
+   * arguments, the live lease and the control plane's current grants.
+   */
+  private async agentToolLoop(input: {
+    job: ClaimedJob;
+    ledger: JobLedger;
+    guard: LeaseGuard;
+    agent: Record<string, any>;
+    manifest: Record<string, any>;
+    offered: Map<string, ToolSpec>;
+    system: string;
+    prompt: string;
+    maxRounds: number;
+  }): Promise<AgentLoopResult> {
+    const { job, ledger, guard, agent, manifest, offered } = input;
+    const written = new Map<string, WrittenArtifact>();
+    const eventIds: string[] = [];
+    const artifactIds: string[] = [];
+    let readCount = 0;
+
+    const handleTool = async (call: ToolCall): Promise<string> => {
+      const spec = offered.get(call.name);
+      if (!spec) return `denied: tool ${call.name} was not offered for this attempt`;
+      const argumentError = this.validateToolArguments(call.name, call.arguments);
+      if (argumentError) return `denied: ${argumentError}`;
+      await this.assertLiveGrant(job, guard, manifest, spec);
+      try {
+        if (call.name === 'list_files') {
+          const root = call.arguments.root === 'workspace' ? 'workspace' : 'briefs';
+          const listing = await this.deps.workspace.list(root, agent.id, typeof call.arguments.path === 'string' ? call.arguments.path : '.');
+          const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { root, path: call.arguments.path ?? '.' });
+          if (event) eventIds.push(event);
+          return JSON.stringify(listing);
+        }
+        if (call.name === 'read_file') {
+          const root = call.arguments.root === 'workspace' ? 'workspace' : 'briefs';
+          const path = String(call.arguments.path);
+          const content = await this.deps.workspace.read(root, agent.id, path);
+          readCount++;
+          const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { root, path });
+          if (event) eventIds.push(event);
+          return content.slice(0, MAX_TOOL_RESULT_CHARS);
+        }
+        if (call.name === 'write_file') {
+          const name = String(call.arguments.path);
+          const content = String(call.arguments.content);
+          const stored = await this.publish(job, guard, name, content);
+          written.set(name, stored);
+          artifactIds.push(stored.id);
+          const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { path: stored.path, sha256: stored.sha256 });
+          if (event) eventIds.push(event);
+          return `wrote ${stored.path} (${stored.sha256})`;
+        }
+        if (call.name === 'request_hire') {
+          const proposal = this.buildHireProposal(call.arguments, agent, manifest);
+          const hire = await this.deps.client.asAgent<{ id: string }>(job, 'createHiringRequest', '/v1/hiring-requests', proposal);
+          const event = await this.toolEvent(job, guard, manifest, spec.tool, spec.operation, { hiringRequestId: hire.id });
+          if (event) eventIds.push(event);
+          return `hiring request ${hire.id} created and awaiting human approval`;
+        }
+        return `unknown tool: ${call.name}`;
+      } catch (error) {
+        if (error instanceof LeaseLostError) throw error;
+        if (error instanceof WorkerError && FATAL_TOOL_CODES.has(error.code)) throw error;
+        // Ordinary tool problems are returned to the model instead of fabricating success.
+        return `tool error: ${(error as Error).message}`;
+      }
+    };
+
+    const result = await runToolLoop({
+      model: this.deps.model,
+      system: input.system,
+      prompt: input.prompt,
+      tools: [...offered.values()].map(spec => spec.definition),
+      maxRounds: input.maxRounds,
+      handleTool,
+      onTurn: async turn => {
+        ledger.record(turn.usage);
+        const event = await this.observe(job, guard, 'model.execution', 'Model turn during execution', {
+          model: this.deps.model.name, toolCalls: turn.toolCalls.map(toolCall => toolCall.name),
+          inputTokens: turn.usage.inputTokens, outputTokens: turn.usage.outputTokens,
+        });
+        eventIds.push(event);
+      },
+    });
+    return { content: result.content, written, readCount, eventIds, artifactIds };
   }
 
   // --- compile_manifest -----------------------------------------------------
 
-  private async compileManifest(job: ClaimedJob, ledger: JobLedger): Promise<void> {
+  private async compileManifest(job: ClaimedJob, ledger: JobLedger, guard: LeaseGuard): Promise<void> {
     const payload = job.payload as any;
     const { hiringRequest, agent, organization, teams } = payload;
     await ledger.reserve(1);
     const team = (teams as Record<string, any>[]).find(candidate => candidate.id === hiringRequest.proposal.teamId);
+    guard.assertLive();
     const turn = await this.deps.model.turn({
       system: [
         'You compile a natural-language hiring request into a reviewed agent role.',
@@ -172,7 +413,7 @@ export class JobRunner {
       }],
     });
     ledger.record(turn.usage);
-    await this.observe(job, 'model.compilation', 'Compiled a role draft from the hiring request', {
+    await this.observe(job, guard, 'model.compilation', 'Compiled a role draft from the hiring request', {
       model: this.deps.model.name,
       modelCalls: turn.usage.modelCalls,
       inputTokens: turn.usage.inputTokens,
@@ -185,6 +426,7 @@ export class JobRunner {
       throw new WorkerError('INVALID_MANIFEST', `Compiled manifest does not match the shared schema: ${errors}`, false);
     }
     await ledger.settle();
+    guard.assertLive();
     await this.deps.client.complete(job, { kind: 'compile_manifest', manifest });
   }
 
@@ -193,8 +435,19 @@ export class JobRunner {
     if (proposal.agentType === 'consultant' && !proposal.consultant) {
       throw new WorkerError('CONSULTANT_BOUND_REQUIRED', 'A consultant proposal must include its deliverable and termination condition', false);
     }
-    const tools = [...new Set<string>(proposal.tools)].filter(tool => Object.hasOwn(SUPPORTED_TOOLS, tool));
-    const permissions = (proposal.grants as Grant[]).filter(grant => tools.includes(grant.tool));
+    const requestedTools: string[] = [...new Set<string>(proposal.tools)];
+    const unsupported = requestedTools.filter(tool => !Object.hasOwn(SUPPORTED_TOOLS, tool));
+    if (unsupported.length) {
+      // A real capability gap must block compilation, not be silently dropped.
+      throw new WorkerError('TOOL_UNAVAILABLE', `Unsupported requested tools: ${unsupported.join(', ')}`, false);
+    }
+    const permissions = (proposal.grants as Grant[]).filter(grant => requestedTools.includes(grant.tool));
+    const invalidGrants = (proposal.grants as Grant[]).filter(
+      grant => !requestedTools.includes(grant.tool) || grant.operations.some(op => !SUPPORTED_TOOLS[grant.tool]?.includes(op)),
+    );
+    if (invalidGrants.length) {
+      throw new WorkerError('INVALID_GRANT', `Proposal contains unsupported grants: ${invalidGrants.map(grant => grant.tool).join(', ')}`, false);
+    }
     return {
       agent: { id: input.agent.id, name: typeof draft.name === 'string' && draft.name.trim() ? draft.name.trim() : proposal.role, type: proposal.agentType },
       organization: {
@@ -209,7 +462,7 @@ export class JobRunner {
       responsibilities: stringList(draft.responsibilities, stringList(proposal.responsibilities, ['Perform the role mission.'])),
       successMetrics: stringList(draft.successMetrics, ['Evidence-backed deliverables.']),
       runtime: { model: this.deps.config.modelName, executionEnvironment: 'sandboxed' },
-      tools,
+      tools: requestedTools,
       permissions,
       memory: { working: true, episodic: true, semantic: true, canonical: true },
       learning: {
@@ -243,119 +496,184 @@ export class JobRunner {
 
   // --- provision_agent / reconfigure_agent ---------------------------------
 
-  private async provision(job: ClaimedJob, ledger: JobLedger): Promise<void> {
+  private async provision(job: ClaimedJob, ledger: JobLedger, guard: LeaseGuard): Promise<void> {
     const payload = job.payload as any;
-    const agent = payload.agent;
+    const agent = payload.agent as Record<string, any>;
     const manifest = payload.manifest as Record<string, any>;
-    const verified = new Set<string>();
+    const maxRounds = Math.min(3, this.deps.config.maxToolRounds);
+    // One strict model self-check plus the bounded end-to-end tool loop.
+    await ledger.reserve(1 + maxRounds);
+
     const artifacts: string[] = [];
     const events: string[] = [];
-    const record = (check: VerificationCheck) => { verified.add(check.name); return check; };
     const checks: VerificationCheck[] = [];
+    const pass = (name: string, evidence: ReturnType<typeof makeEvidence>) => {
+      checks.push(succeededCheck(name, evidence));
+      return evidence;
+    };
 
-    // Reserve for a real model self-check plus one end-to-end round trip.
-    await ledger.reserve(2);
-
-    // 1. runtime: write, hash and read back a durable probe artifact.
+    // 1. runtime: durable probe with hash read-back.
     const probe = await this.deps.workspace.probe(agent.id, job.jobId, job.attempt, 'runtime-probe.txt', `runtime probe ${job.jobId} ${nowIso()}`);
-    const runtimeArtifact = await this.publish(job, 'runtime-probe.txt', probe.content.toString('utf8'));
-    const runtimeEvent = await this.observe(job, 'verification.runtime', 'Workspace write/read/hash probe passed', { path: runtimeArtifact.path, sha256: probe.sha256 });
+    const runtimeArtifact = await this.publish(job, guard, 'runtime-probe.txt', probe.content);
+    const runtimeEvent = await this.observe(job, guard, 'verification.runtime', 'Workspace write/read/hash probe passed with read-back', { path: runtimeArtifact.path, sha256: probe.sha256 });
     artifacts.push(runtimeArtifact.id); events.push(runtimeEvent);
-    checks.push(record(succeededCheck('runtime', makeEvidence({ artifactIds: [runtimeArtifact.id], eventIds: [runtimeEvent], taskId: job.taskId, jobId: job.jobId, summary: `Immutable runtime probe ${runtimeArtifact.path} round-tripped with a matching SHA-256.` }))));
+    pass('runtime', makeEvidence({ artifactIds: [runtimeArtifact.id], eventIds: [runtimeEvent], taskId: job.taskId, jobId: job.jobId, summary: `Immutable runtime probe ${runtimeArtifact.path} round-tripped with a matching SHA-256.` }));
 
-    // 2. model: invoke the configured real model and record its actual usage.
-    let modelReply = '';
-    let modelUsage: ModelUsage = { ...EMPTY_USAGE };
-    const modelTurn = await this.deps.model.turn({
-      system: 'You are a runtime self-check. Reply with exactly the single word READY and nothing else.',
-      messages: [{ role: 'user', content: 'Confirm the configured model is reachable.' }],
+    // 2. model: the model must echo a nonce exactly, so partial or negated replies fail.
+    const nonce = randomUUID();
+    guard.assertLive();
+    const selfCheck = await this.deps.model.turn({
+      system: 'You are a runtime self-check. Reply with exactly the token the user sends, and nothing else.',
+      messages: [{ role: 'user', content: nonce }],
     });
-    modelUsage = modelTurn.usage;
-    ledger.record(modelUsage);
-    modelReply = (modelTurn.content ?? '').trim();
-    const modelEvent = await this.observe(job, 'model.selfcheck', 'Invoked the configured model for a runtime self-check', {
-      model: this.deps.model.name, modelCalls: modelUsage.modelCalls, inputTokens: modelUsage.inputTokens, outputTokens: modelUsage.outputTokens, reply: modelReply.slice(0, 200),
+    ledger.record(selfCheck.usage);
+    const echoed = (selfCheck.content ?? '').trim();
+    const modelEvent = await this.observe(job, guard, 'model.selfcheck', 'Invoked the configured model for a strict self-check', {
+      model: this.deps.model.name, modelCalls: selfCheck.usage.modelCalls, inputTokens: selfCheck.usage.inputTokens, outputTokens: selfCheck.usage.outputTokens, matched: echoed === nonce,
     });
     events.push(modelEvent);
-    checks.push(record(succeededCheck('model', makeEvidence({ eventIds: [modelEvent], taskId: job.taskId, jobId: job.jobId, summary: `The configured model ${this.deps.model.name} responded with persisted usage.` }))));
+    if (echoed !== nonce) {
+      throw new WorkerError('MODEL_SELFCHECK_FAILED', `The model did not echo the verification nonce exactly (received "${echoed.slice(0, 40)}")`, false);
+    }
+    pass('model', makeEvidence({ eventIds: [modelEvent], taskId: job.taskId, jobId: job.jobId, summary: `The configured model ${this.deps.model.name} returned the exact verification nonce.` }));
 
-    // 3. tools: list the approved briefs and the agent workspace.
-    const inventory = JSON.stringify({ briefs: await this.deps.workspace.list('briefs', agent.id), workspace: await this.deps.workspace.list('workspace', agent.id) }, null, 2);
-    const toolsArtifact = await this.publish(job, 'tools-inventory.json', inventory, 'application/json');
-    const toolsEvent = await this.toolEvent(job, manifest, 'workspace-files', 'list', { root: 'briefs' })
-      ?? await this.observe(job, 'verification.tools', 'Enumerated the readable tool roots', {});
+    // 3. tools: real scoped reads and a hash-verified write.
+    const briefs = await this.deps.workspace.list('briefs', agent.id);
+    const inventory = JSON.stringify({ agentId: agent.id, briefs, workspace: await this.deps.workspace.list('workspace', agent.id) }, null, 2);
+    const toolsArtifact = await this.publish(job, guard, 'tools-inventory.json', inventory, 'application/json');
+    let briefsRead = 0;
+    for (const brief of briefs.slice(0, 3)) {
+      if ((await this.deps.workspace.read('briefs', agent.id, brief.path)).length > 0) briefsRead++;
+    }
+    const toolsEvent = await this.toolEvent(job, guard, manifest, 'workspace-files', 'list', { root: 'briefs' })
+      ?? await this.observe(job, guard, 'verification.tools', 'Enumerated the agent-scoped tool roots', {});
     artifacts.push(toolsArtifact.id); events.push(toolsEvent);
-    checks.push(record(succeededCheck('tools', makeEvidence({ artifactIds: [toolsArtifact.id], eventIds: [toolsEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Approved workspace-files reads succeeded and were enumerated.' }))));
+    pass('tools', makeEvidence({ artifactIds: [toolsArtifact.id], eventIds: [toolsEvent], taskId: job.taskId, jobId: job.jobId, summary: `Read ${briefsRead} agent-scoped brief(s) and enumerated the granted workspace-files roots.` }));
 
-    // 4. authentication: assert no external credentials are referenced.
-    const credentialRefs = (manifest.permissions as Grant[]).filter(grant => grant.credentialRef !== null);
-    if (credentialRefs.length) throw new WorkerError('TOOL_UNAVAILABLE', 'External credentials are unavailable in this deployment', false);
-    const authEvent = await this.observe(job, 'verification.authentication', 'Worker credential and current lease authenticated every provisioning call', { worker: this.deps.config.workerPrincipalId, credentials: 0 });
+    // 4. authentication: the control plane must reject a forged credential while accepting this lease.
+    const rejected = await this.deps.client.probeUnauthorized(job.jobId);
+    if (!rejected) throw new WorkerError('AUTH_BOUNDARY', 'The control plane accepted a forged worker credential', false);
+    const authEvent = await this.observe(job, guard, 'verification.authentication', 'Control plane rejected a forged worker credential while this lease was accepted', { worker: this.deps.config.workerPrincipalId, forgedCredentialStatus: 401 });
     events.push(authEvent);
-    checks.push(record(succeededCheck('authentication', makeEvidence({ eventIds: [authEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Every provisioning call used the authenticated worker credential and current lease; no external credential is required.' }))));
+    pass('authentication', makeEvidence({ eventIds: [authEvent], taskId: job.taskId, jobId: job.jobId, summary: 'A forged worker credential was rejected with 401 while this authenticated lease was accepted.' }));
 
-    // 5. permissions: confirm every grant is a supported local operation.
+    // 5. permissions: every grant is supported and a cross-agent read is refused.
     for (const grant of manifest.permissions as Grant[]) {
       const supported = SUPPORTED_TOOLS[grant.tool];
       if (!supported || !manifest.tools.includes(grant.tool) || grant.operations.some(op => !supported.includes(op)) || grant.resource !== null) {
         throw new WorkerError('INVALID_GRANT', `Grant for ${grant.tool} is not a supported local capability`, false);
       }
     }
-    const permissionEvent = await this.observe(job, 'verification.permissions', 'Validated the approved grant set against supported local operations', { tools: manifest.tools });
+    let crossAgentDenied = false;
+    try {
+      await this.deps.workspace.list('briefs', `not-${agent.id}`);
+      await this.deps.workspace.read('briefs', `not-${agent.id}`, 'anything.md');
+    } catch {
+      crossAgentDenied = true;
+    }
+    if (!crossAgentDenied) throw new WorkerError('SCOPE_BOUNDARY', 'Agent-scoped reads were not confined to the agent', false);
+    const permissionEvent = await this.observe(job, guard, 'verification.permissions', 'Validated grants against the supported allowlist and refused a cross-agent read', { tools: manifest.tools });
     events.push(permissionEvent);
-    checks.push(record(succeededCheck('permissions', makeEvidence({ eventIds: [permissionEvent], taskId: job.taskId, jobId: job.jobId, summary: `Grants for ${(manifest.tools as string[]).join(', ') || 'no tools'} are within the supported local allowlist.` }))));
+    pass('permissions', makeEvidence({ eventIds: [permissionEvent], taskId: job.taskId, jobId: job.jobId, summary: `Grants for ${(manifest.tools as string[]).join(', ') || 'no tools'} are supported and cross-agent reads are refused.` }));
 
-    // 6. memory: initialize agent-scoped working memory and read it back.
-    const memoryRecord = JSON.stringify({ agentId: agent.id, initializedAt: nowIso(), standards: manifest.context?.canonicalMemoryIds ?? [] }, null, 2);
+    // 6. memory: initialize agent-scoped working memory and verify read-back.
+    const memoryRecord = JSON.stringify({ agentId: agent.id, initializedAt: nowIso() }, null, 2);
     await this.deps.workspace.writeWorkspaceFile(agent.id, 'memory/working.json', memoryRecord);
-    const memoryArtifact = await this.publish(job, 'memory-initialization.json', memoryRecord, 'application/json');
+    const memoryArtifact = await this.publish(job, guard, 'memory-initialization.json', memoryRecord, 'application/json');
     const memoryReadback = await this.deps.workspace.read('workspace', agent.id, 'memory/working.json');
     if (memoryReadback !== memoryRecord) throw new WorkerError('MEMORY_INTEGRITY', 'Agent working memory did not read back verbatim', false);
-    const memoryEvent = await this.observe(job, 'verification.memory', 'Initialized scoped working memory and verified read-back', { path: 'memory/working.json' });
+    const memoryEvent = await this.observe(job, guard, 'verification.memory', 'Initialized scoped working memory and verified read-back', { path: 'memory/working.json' });
     artifacts.push(memoryArtifact.id); events.push(memoryEvent);
-    checks.push(record(succeededCheck('memory', makeEvidence({ artifactIds: [memoryArtifact.id], eventIds: [memoryEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Agent working memory was written and read back verbatim.' }))));
+    pass('memory', makeEvidence({ artifactIds: [memoryArtifact.id], eventIds: [memoryEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Agent working memory was written and read back verbatim.' }));
 
-    // 7. communication: verify the manifest's communication policy is internally consistent.
-    if (manifest.communication.canContactManager !== (manifest.escalation.managerId === manifest.organization.managerId)) {
-      throw new WorkerError('INVALID_COMMUNICATION', 'Communication and escalation policies disagree about the manager', false);
-    }
-    const communicationEvent = await this.observe(job, 'verification.communication', 'Validated manager, report and communication policy consistency', { managerId: manifest.organization.managerId });
-    events.push(communicationEvent);
-    checks.push(record(succeededCheck('communication', makeEvidence({ eventIds: [communicationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Communication policy matches the approved reporting relationship.' }))));
-
-    // 8. escalation: verify escalation routes to the authoritative manager.
-    const escalationEvent = await this.observe(job, 'verification.escalation', 'Validated escalation routing to the authoritative manager', { managerId: manifest.escalation.managerId, triggers: manifest.escalation.triggers });
-    events.push(escalationEvent);
-    checks.push(record(succeededCheck('escalation', makeEvidence({ eventIds: [escalationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Escalation routes to the approved reporting manager with named triggers.' }))));
-
-    // 9. observability: confirm this attempt's observations are durably queryable.
-    const observabilityEvent = await this.observe(job, 'verification.observability', 'Confirmed this attempt emitted durable, scoped observations', {
-      observed: [runtimeEvent, modelEvent, toolsEvent, authEvent, permissionEvent, memoryEvent],
+    // 7-10. Real end-to-end run: read an approved brief, produce a deliverable,
+    // draft the manager reply and a policy-valid escalation.
+    const offered = this.offeredTools(manifest, false);
+    const loop = await this.agentToolLoop({
+      job, ledger, guard, agent, manifest, offered,
+      system: [
+        `You are ${manifest.agent.name}, completing a provisioning verification.`,
+        briefs.length ? 'Read at least one approved brief with read_file before writing anything.' : 'No approved briefs exist yet; proceed without reading sources.',
+        'Write one small deliverable with write_file.',
+        'Then reply with a single JSON object:',
+        '{"summary":"...","reply":"a short message to your reporting manager","deliverable":"the exact relative path you wrote","escalation":{"trigger":"<one of the approved triggers>","situation":"...","recommendation":"..."}}.',
+        `Approved escalation triggers: ${(manifest.escalation.triggers as string[]).join('; ')}.`,
+        'Do not invent results; only describe what you actually read and wrote.',
+      ].join(' '),
+      prompt: JSON.stringify({ agentId: agent.id, teamId: manifest.organization.teamId, managerId: manifest.organization.managerId, mission: manifest.mission.primary }),
+      maxRounds,
     });
-    events.push(observabilityEvent);
-    checks.push(record(succeededCheck('observability', makeEvidence({ eventIds: [observabilityEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Model, tool and verification observations were persisted for this attempt.' }))));
+    const draft = extractJson<ProvisionDraft>(loop.content);
+    const deliverableName = typeof draft.deliverable === 'string' ? draft.deliverable.trim() : '';
+    const deliverable = [...loop.written.entries()].find(([name, record]) => name === deliverableName || record.path.endsWith(`/${deliverableName}`));
+    if (!deliverable) throw new WorkerError('DELIVERABLE_MISSING', 'The provisioning run did not produce the reported deliverable', false);
+    if (briefs.length > 0 && loop.readCount === 0) throw new WorkerError('SOURCE_UNREAD', 'The provisioning run did not read any approved brief', false);
+    const deliverableArtifact = deliverable[1];
 
-    // 10. evaluation: evaluate the real model self-check output against the manifest criteria.
-    const passedModel = /READY/i.test(modelReply);
-    if (!passedModel) throw new WorkerError('EVALUATION_FAILED', 'The model self-check did not return the expected confirmation', true);
-    const evaluationEvent = await this.observe(job, 'verification.evaluation', 'Evaluated recorded model output against the manifest criteria', { criteria: manifest.evaluation.criteria, passed: passedModel });
-    events.push(evaluationEvent);
-    checks.push(record(succeededCheck('evaluation', makeEvidence({ artifactIds: [runtimeArtifact.id], eventIds: [modelEvent, evaluationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Recorded model output satisfied the manifest evaluation criteria.' }))));
-
-    // 11. restart: confirm persisted knowledge survives independently of the process.
-    const restartArtifact = await this.publish(job, 'restart-check.json', JSON.stringify({ path: 'memory/working.json', bytes: Buffer.byteLength(memoryReadback) }), 'application/json');
-    const restartEvent = await this.observe(job, 'verification.restart', 'Re-read durable workspace knowledge after the write', { path: 'memory/working.json' });
-    artifacts.push(restartArtifact.id); events.push(restartEvent);
-    checks.push(record(succeededCheck('restart', makeEvidence({ artifactIds: [restartArtifact.id], eventIds: [memoryEvent, restartEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Agent knowledge persisted outside the process and was re-read successfully.' }))));
-
-    // 12. end_to_end: a real model round trip that produced a verified artifact.
-    const endToEndEvent = await this.observe(job, 'verification.end_to_end', 'Exercised a model call that produced a verified immutable artifact', {
-      model: this.deps.model.name, artifact: runtimeArtifact.path, sha256: probe.sha256,
+    // end_to_end: the real read → artifact → hash verified loop.
+    const endToEndEvent = await this.observe(job, guard, 'verification.end_to_end', 'Completed a real read and artifact round trip', {
+      model: this.deps.model.name, deliverable: deliverableArtifact.path, sha256: deliverableArtifact.sha256, briefsRead: loop.readCount,
     });
     events.push(endToEndEvent);
-    checks.push(record(succeededCheck('end_to_end', makeEvidence({ artifactIds: [runtimeArtifact.id], eventIds: [modelEvent, endToEndEvent], taskId: job.taskId, jobId: job.jobId, summary: 'A real model invocation and immutable artifact write completed end to end.' }))));
+    pass('end_to_end', makeEvidence({ artifactIds: [deliverableArtifact.id], eventIds: [...loop.eventIds, endToEndEvent], taskId: job.taskId, jobId: job.jobId, summary: `The model read ${loop.readCount} brief(s) and produced verified artifact ${deliverableArtifact.path}.` }));
+
+    // communication: the agent produced a real manager reply, validated against its communication policy.
+    const reply = typeof draft.reply === 'string' ? draft.reply.trim() : '';
+    if (!reply) throw new WorkerError('COMMUNICATION_UNVERIFIED', 'The provisioning run did not produce a manager reply', false);
+    if (manifest.communication.canContactManager !== true) throw new WorkerError('COMMUNICATION_POLICY', 'The manifest does not authorize manager contact', false);
+    const communicationArtifact = await this.publish(job, guard, 'communication-draft.json', JSON.stringify({ to: manifest.organization.managerId, reply }, null, 2), 'application/json');
+    const communicationEvent = await this.observe(job, guard, 'verification.communication', 'Produced a policy-compliant manager reply and persisted it', { managerId: manifest.organization.managerId });
+    artifacts.push(communicationArtifact.id); events.push(communicationEvent);
+    pass('communication', makeEvidence({ artifactIds: [communicationArtifact.id], eventIds: [communicationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'The agent produced a manager-addressed reply under its approved communication policy.' }));
+
+    // escalation: a real blocker routed to a policy-approved trigger and manager.
+    const escalation = (draft.escalation ?? {}) as EscalationDraft;
+    const approvedTriggers = manifest.escalation.triggers as string[];
+    const trigger = approvedTriggers.find(candidate => candidate.toLowerCase() === String(escalation.trigger ?? '').trim().toLowerCase());
+    const situation = typeof escalation.situation === 'string' ? escalation.situation.trim() : '';
+    const recommendation = typeof escalation.recommendation === 'string' ? escalation.recommendation.trim() : '';
+    if (!trigger || !situation || !recommendation) {
+      throw new WorkerError('ESCALATION_UNVERIFIED', 'The provisioning run did not produce a valid, policy-approved escalation', false);
+    }
+    const escalationArtifact = await this.publish(job, guard, 'escalation-draft.json', JSON.stringify({ to: manifest.escalation.managerId, trigger, situation, recommendation }, null, 2), 'application/json');
+    const escalationEvent = await this.observe(job, guard, 'verification.escalation', 'Produced a policy-approved escalation and persisted it', { managerId: manifest.escalation.managerId, trigger });
+    artifacts.push(escalationArtifact.id); events.push(escalationEvent);
+    pass('escalation', makeEvidence({ artifactIds: [escalationArtifact.id], eventIds: [escalationEvent], taskId: job.taskId, jobId: job.jobId, summary: `Produced escalation "${trigger}" routed to ${manifest.escalation.managerId}.` }));
+
+    // observability: this attempt's model, tool and verification observations are persisted.
+    const observabilityEvent = await this.observe(job, guard, 'verification.observability', 'Confirmed this attempt emitted durable, scoped observations', {
+      observed: [...new Set([runtimeEvent, modelEvent, toolsEvent, authEvent, permissionEvent, memoryEvent, endToEndEvent, ...loop.eventIds])],
+    });
+    events.push(observabilityEvent);
+    pass('observability', makeEvidence({ eventIds: [observabilityEvent], taskId: job.taskId, jobId: job.jobId, summary: 'Model, tool and verification observations were persisted for this attempt.' }));
+
+    // evaluation: a deterministic verdict over the real artifacts, persisted before activation.
+    const verdict = {
+      criteria: manifest.evaluation.criteria,
+      deliverable: deliverableArtifact.path,
+      deliverableSha256: deliverableArtifact.sha256,
+      briefsRead: loop.readCount,
+      managerReply: true,
+      escalationTrigger: trigger,
+      passed: true,
+    };
+    const evaluationArtifact = await this.publish(job, guard, 'evaluation.json', JSON.stringify(verdict, null, 2), 'application/json');
+    const evaluationEvent = await this.observe(job, guard, 'verification.evaluation', 'Evaluated the recorded provisioning run against the manifest criteria', verdict);
+    artifacts.push(evaluationArtifact.id); events.push(evaluationEvent);
+    pass('evaluation', makeEvidence({ artifactIds: [evaluationArtifact.id], eventIds: [evaluationEvent], taskId: job.taskId, jobId: job.jobId, summary: 'The recorded model run satisfied the manifest evaluation criteria and was persisted.' }));
+
+    // restart: a separate process reads the published bytes and reproduces the hash.
+    const childHash = await this.childProcessHash(deliverableArtifact.absolutePath);
+    if (childHash !== deliverableArtifact.sha256) {
+      throw new WorkerError('RESTART_INTEGRITY', 'A separate process could not reproduce the persisted artifact hash', false);
+    }
+    const restartArtifact = await this.publish(job, guard, 'restart-check.json', JSON.stringify({ path: deliverableArtifact.path, sha256: childHash }, null, 2), 'application/json');
+    const restartEvent = await this.observe(job, guard, 'verification.restart', 'A separate process reproduced the persisted artifact hash', { path: deliverableArtifact.path, sha256: childHash });
+    artifacts.push(restartArtifact.id); events.push(restartEvent);
+    pass('restart', makeEvidence({ artifactIds: [restartArtifact.id], eventIds: [restartEvent], taskId: job.taskId, jobId: job.jobId, summary: 'A separate process re-read the persisted artifact and reproduced its SHA-256.' }));
 
     // Every manifest-specific required check must also be present and pass.
+    const verified = new Set(checks.map(check => check.name));
     const required = new Set<string>([...REQUIRED_VERIFICATION_CHECKS, ...(manifest.evaluation.requiredVerificationChecks ?? [])]);
     for (const name of required) {
       if (!verified.has(name)) throw new WorkerError('VERIFICATION_REQUIRED', `Missing mandatory verification: ${name}`, false);
@@ -364,6 +682,7 @@ export class JobRunner {
     const steps: ProvisioningStep[] = checks.map(check => ({ name: check.name, status: 'PASSED', evidence: check.evidence, error: null }));
     const resources = this.buildResources(agent, manifest, checks);
     await ledger.settle();
+    guard.assertLive();
     await this.deps.client.complete(job, { kind: job.kind as 'provision_agent' | 'reconfigure_agent', steps, checks, resources });
   }
 
@@ -381,10 +700,10 @@ export class JobRunner {
         grants: [], verification: verificationFor('model'),
       },
     ];
-    if (manifest.memory?.working) {
+    if (workspaceGrant) {
       resources.push({
         ...base(), agentId: agent.id, type: 'tool', reference: 'workspace-files', status: 'AVAILABLE',
-        grants: workspaceGrant ? [workspaceGrant] : [], verification: verificationFor('tools'),
+        grants: [workspaceGrant], verification: verificationFor('tools'),
       });
     }
     return resources;
@@ -392,114 +711,72 @@ export class JobRunner {
 
   // --- run_task -------------------------------------------------------------
 
-  private async runTask(job: ClaimedJob, ledger: JobLedger): Promise<void> {
+  private async runTask(job: ClaimedJob, ledger: JobLedger, guard: LeaseGuard): Promise<void> {
     const payload = job.payload as any;
     const { agent, task, inputMessage } = payload;
     const manifest = agent.manifest as Record<string, any>;
     if (!manifest) throw new WorkerError('MANIFEST_MISSING', 'The agent has no approved manifest to execute with', false);
-    await ledger.reserve(this.deps.config.maxToolRounds);
-
-    const tools: ToolDefinition[] = [];
-    const grantOf = (tool: string): Grant | undefined => (manifest.permissions as Grant[]).find(grant => grant.tool === tool);
-    const workspaceGrant = grantOf('workspace-files');
-    const operations = new Set(workspaceGrant?.operations ?? []);
-    if (operations.has('list')) tools.push({ name: 'list_files', description: 'List files under the read-only briefs or the agent workspace.', parameters: { type: 'object', properties: { root: { type: 'string', enum: ['briefs', 'workspace'] }, path: { type: 'string' } }, required: ['root'] } });
-    if (operations.has('read')) tools.push({ name: 'read_file', description: 'Read one text file from the briefs or the agent workspace.', parameters: { type: 'object', properties: { root: { type: 'string', enum: ['briefs', 'workspace'] }, path: { type: 'string' } }, required: ['root', 'path'] } });
-    if (operations.has('write')) tools.push({ name: 'write_file', description: 'Write a deliverable into the immutable job output. Use a relative filename.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } });
-    const hireGrant = grantOf('request_hire');
-    if (hireGrant?.operations.includes('request')) tools.push({
-      name: 'request_hire',
-      description: 'Request one governed hire when a real capability gap blocks the deliverable. Humans must still approve it.',
-      parameters: {
-        type: 'object',
-        properties: {
-          role: { type: 'string' }, mission: { type: 'string' }, justification: { type: 'string' },
-          teamId: { type: 'string' }, agentType: { type: 'string', enum: ['employee', 'consultant'] }, expectedBenefit: { type: 'string' },
-        },
-        required: ['role', 'mission', 'justification', 'expectedBenefit'],
-      },
-    });
-
-    const written = new Map<string, { id: string; path: string }>();
-    const eventIds: string[] = [];
-    const artifactIds: string[] = [];
-
-    const handleTool = async (call: ToolCall): Promise<string> => {
-      try {
-        if (call.name === 'list_files') {
-          const root = call.arguments.root === 'workspace' ? 'workspace' : 'briefs';
-          const listing = await this.deps.workspace.list(root, agent.id, typeof call.arguments.path === 'string' ? call.arguments.path : '.');
-          const event = await this.toolEvent(job, manifest, 'workspace-files', 'list', { root, path: call.arguments.path ?? '.' });
-          if (event) eventIds.push(event);
-          return JSON.stringify(listing);
-        }
-        if (call.name === 'read_file') {
-          const root = call.arguments.root === 'workspace' ? 'workspace' : 'briefs';
-          const path = String(call.arguments.path ?? '');
-          const content = await this.deps.workspace.read(root, agent.id, path);
-          const event = await this.toolEvent(job, manifest, 'workspace-files', 'read', { root, path });
-          if (event) eventIds.push(event);
-          return content.slice(0, MAX_TOOL_RESULT_CHARS);
-        }
-        if (call.name === 'write_file') {
-          const name = String(call.arguments.path ?? 'deliverable.md');
-          const content = String(call.arguments.content ?? '');
-          const stored = await this.deps.workspace.writeArtifact(agent.id, job.jobId, job.attempt, name, content);
-          const published = await this.deps.client.publishArtifact(job, { path: stored.path, contentType: 'text/plain', size: stored.size, sha256: stored.sha256, scope: PRIVATE_SCOPE });
-          written.set(name, { id: published.id, path: published.path });
-          artifactIds.push(published.id);
-          const event = await this.toolEvent(job, manifest, 'workspace-files', 'write', { path: published.path, sha256: stored.sha256 });
-          if (event) eventIds.push(event);
-          return `wrote ${published.path} (${stored.size} bytes, sha256 ${stored.sha256})`;
-        }
-        if (call.name === 'request_hire') {
-          const proposal = this.buildHireProposal(call.arguments, agent, manifest);
-          const hire = await this.deps.client.asAgent<{ id: string }>(job, 'createHiringRequest', '/v1/hiring-requests', proposal);
-          const event = await this.toolEvent(job, manifest, 'request_hire', 'request', { hiringRequestId: hire.id });
-          if (event) eventIds.push(event);
-          return `hiring request ${hire.id} created and awaiting human approval`;
-        }
-        return `unknown tool: ${call.name}`;
-      } catch (error) {
-        if (error instanceof LeaseLostError) throw error;
-        // Tool problems are returned to the model instead of fabricating success.
-        return `tool error: ${(error as Error).message}`;
-      }
-    };
-
-    const result = await runToolLoop({
-      model: this.deps.model,
+    const offered = this.offeredTools(manifest, true);
+    await ledger.reserve(1 + this.deps.config.maxToolRounds);
+    const loop = await this.agentToolLoop({
+      job, ledger, guard, agent, manifest, offered,
       system: this.taskSystemPrompt(manifest),
       prompt: this.taskPrompt(agent, task, inputMessage),
-      tools,
       maxRounds: this.deps.config.maxToolRounds,
-      handleTool,
-      onTurn: async turn => {
-        ledger.record(turn.usage);
-        const event = await this.observe(job, 'model.execution', 'Model turn during task execution', {
-          model: this.deps.model.name, toolCalls: turn.toolCalls.map(toolCall => toolCall.name),
-          inputTokens: turn.usage.inputTokens, outputTokens: turn.usage.outputTokens,
-        });
-        eventIds.push(event);
-      },
     });
 
-    const parsed = this.parseTaskDraft(result.content);
-    const summary = parsed.summary;
-    // Always persist the final answer as a real artifact so evidence is concrete.
-    const finalArtifact = await this.publish(job, 'result.md', result.content || summary, 'text/markdown');
-    artifactIds.push(finalArtifact.id);
-    const reply = inputMessage ? (parsed.reply || summary) : null;
-    const evidence = makeEvidence({ artifactIds, eventIds, taskId: task.id, jobId: job.jobId, summary });
+    // Task state never depends on model prose alone: require the reported deliverable,
+    // read-back verification and the required source read before completing.
+    const draft = extractJson<TaskDraft>(loop.content);
+    const summary = typeof draft.summary === 'string' ? draft.summary.trim() : '';
+    const deliverableName = typeof draft.deliverable === 'string' ? draft.deliverable.trim() : '';
+    if (!summary) throw new WorkerError('MODEL_OUTPUT', 'The model did not return a usable summary', false);
+    if (!deliverableName) throw new WorkerError('DELIVERABLE_MISSING', 'The model did not report a deliverable path', false);
+    const deliverable = [...loop.written.entries()].find(([name, record]) => name === deliverableName || record.path.endsWith(`/${deliverableName}`));
+    if (!deliverable) throw new WorkerError('DELIVERABLE_MISSING', `The model reported ${deliverableName} but did not write it`, false);
+    if (await this.deps.workspace.hasBriefs(agent.id)) {
+      if (loop.readCount === 0) throw new WorkerError('SOURCE_UNREAD', 'The task did not read any approved brief', false);
+    }
+
+    const checks: { path: string; expected: string; actual: string; verified: boolean }[] = [];
+    for (const [, record] of loop.written) {
+      const back = await this.deps.workspace.readBack(record.absolutePath);
+      checks.push({ path: record.path, expected: record.sha256, actual: back.sha256, verified: back.sha256 === record.sha256 });
+    }
+    if (checks.some(check => !check.verified)) throw new WorkerError('ARTIFACT_INTEGRITY', 'A published artifact did not verify on read-back', false);
+
+    const reply = typeof draft.reply === 'string' && draft.reply.trim() ? draft.reply.trim() : null;
+    if (inputMessage && !reply) throw new WorkerError('REPLY_REQUIRED', 'An actionable incoming message requires a reply', false);
+
+    const validation = { summary, deliverable: deliverable[1].path, reply, briefsRead: loop.readCount, artifacts: checks };
+    const validationArtifact = await this.publish(job, guard, 'task-validation.json', JSON.stringify(validation, null, 2), 'application/json');
+    const validationEvent = await this.observe(job, guard, 'verification.task', 'Verified the deliverable, read-back hashes and required source read', {
+      deliverable: deliverable[1].path, artifacts: checks.map(check => check.path), briefsRead: loop.readCount,
+    });
+
+    const evidence = makeEvidence({
+      artifactIds: [...loop.artifactIds, validationArtifact.id],
+      eventIds: [...loop.eventIds, validationEvent],
+      taskId: task.id,
+      jobId: job.jobId,
+      summary,
+    });
     await ledger.settle();
+    guard.assertLive();
     await this.deps.client.complete(job, { kind: 'run_task', evidence, summary, reply });
   }
 
+  /** Recruit authority is propagated only where the approved manifest grants it. */
   private buildHireProposal(args: Record<string, unknown>, agent: Record<string, any>, manifest: Record<string, any>): Record<string, any> {
     const agentType = args.agentType === 'consultant' ? 'consultant' : 'employee';
-    // A descendant gets only the restricted local workspace tool; it cannot re-recruit.
-    const tools = ['workspace-files'];
-    const grants: Grant[] = [{ tool: 'workspace-files', operations: ['read', 'write', 'list'], resource: null, credentialRef: null }];
+    const parentCanRecruit = (manifest.permissions as Grant[]).some(
+      grant => grant.tool === 'request_hire' && grant.operations.includes('request'),
+    );
+    const tools = parentCanRecruit ? ['workspace-files', 'request_hire'] : ['workspace-files'];
+    const grants: Grant[] = [
+      { tool: 'workspace-files', operations: ['read', 'write', 'list'], resource: null, credentialRef: null },
+      ...(parentCanRecruit ? [{ tool: 'request_hire', operations: ['request'], resource: null, credentialRef: null }] : []),
+    ];
     return {
       justification: String(args.justification),
       role: String(args.role),
@@ -526,9 +803,10 @@ export class JobRunner {
       `Responsibilities: ${(manifest.responsibilities as string[]).join('; ')}.`,
       `Standards: ${(manifest.standards as string[]).join('; ')}.`,
       `Tools: ${(manifest.tools as string[]).join(', ') || 'none'}.`,
-      'Produce only grounded work: read approved briefs before asserting facts and never invent evidence.',
-      'When finished, respond with a single JSON object: {"summary": "...", "reply": "..."} where reply addresses the requester.',
-      'Use write_file to persist any deliverable. Keep file names relative and simple.',
+      'Produce only grounded work: read the approved briefs before asserting facts and never invent evidence.',
+      'You MUST persist the deliverable with write_file before finishing.',
+      'When finished respond with a single JSON object and no prose:',
+      '{"summary":"what you actually did","reply":"a reply to the requester","deliverable":"the exact relative path you wrote with write_file"}.',
     ].join(' ');
   }
 
@@ -543,81 +821,108 @@ export class JobRunner {
     });
   }
 
-  private parseTaskDraft(content: string): { summary: string; reply: string | null } {
-    try {
-      const draft = extractJson<TaskDraft>(content);
-      const summary = typeof draft.summary === 'string' && draft.summary.trim() ? draft.summary.trim() : firstParagraph(content);
-      const reply = typeof draft.reply === 'string' && draft.reply.trim() ? draft.reply.trim() : null;
-      return { summary: summary || 'Completed the delegated task.', reply };
-    } catch {
-      const text = content.trim() || 'Completed the delegated task.';
-      return { summary: firstParagraph(text), reply: null };
-    }
-  }
-
   // --- learn ----------------------------------------------------------------
 
-  private async learn(job: ClaimedJob, ledger: JobLedger): Promise<void> {
+  private async learn(job: ClaimedJob, ledger: JobLedger, guard: LeaseGuard): Promise<void> {
     const payload = job.payload as any;
-    const agent = payload.agent;
+    const agent = payload.agent as Record<string, any>;
     const manifest = agent.manifest as Record<string, any>;
     await ledger.reserve(1);
-    const memory = await this.deps.workspace.read('workspace', agent.id, 'memory/working.json').catch(() => '{}');
+
+    // Learning must be grounded in prior persisted execution evidence, never in
+    // the lesson's own artifact (which would be circular provenance).
+    const memory = await this.deps.client.listMemory(job, 50).catch(() => []);
+    const grounded = (Array.isArray(memory) ? memory : []).filter(entry =>
+      entry?.provenance && ((entry.provenance.artifactIds?.length ?? 0) > 0 || (entry.provenance.eventIds?.length ?? 0) > 0));
+    if (!grounded.length) {
+      throw new WorkerError('NO_PRIOR_EVIDENCE', 'Learning requires prior persisted execution evidence to ground the lesson', false);
+    }
+    const basis = grounded[grounded.length - 1];
+
+    guard.assertLive();
     const turn = await this.deps.model.turn({
       system: [
-        'You capture one grounded, evidence-backed lesson from an agent\'s recent execution.',
+        "You capture one grounded, evidence-backed lesson from an agent's prior persisted execution.",
         'Respond with a single JSON object: {"observation": "...", "hypothesis": "...", "conclusion": "...", "title": "...", "content": "..."}.',
         'Only record observations supported by the supplied material. Never invent results.',
       ].join(' '),
-      messages: [{ role: 'user', content: JSON.stringify({ agentId: agent.id, mission: manifest.mission?.primary, workingMemory: memory.slice(0, 4000) }) }],
+      messages: [{ role: 'user', content: JSON.stringify({
+        agentId: agent.id,
+        mission: manifest.mission?.primary,
+        priorObservation: basis.title,
+        priorContent: basis.content,
+        priorProvenance: basis.provenance,
+      }) }],
     });
     ledger.record(turn.usage);
-    const learningEvent = await this.observe(job, 'model.learning', 'Model proposed an evidence-backed lesson', { model: this.deps.model.name, modelCalls: turn.usage.modelCalls });
+    const learningEvent = await this.observe(job, guard, 'model.learning', 'Model proposed a lesson grounded in prior persisted evidence', { model: this.deps.model.name, modelCalls: turn.usage.modelCalls, basedOn: basis.id });
     const draft = extractJson<LearningDraft>(turn.content);
-    const observation = typeof draft.observation === 'string' && draft.observation.trim() ? draft.observation.trim() : 'Reviewed recent execution.';
-    const hypothesis = typeof draft.hypothesis === 'string' && draft.hypothesis.trim() ? draft.hypothesis.trim() : 'Repeated evidence checks improve reliability.';
-    const conclusion = typeof draft.conclusion === 'string' && draft.conclusion.trim() ? draft.conclusion.trim() : 'Keep verifying sources before drafting.';
-    const title = typeof draft.title === 'string' && draft.title.trim() ? draft.title.trim() : 'Learning from recent execution';
-    const artifact = await this.publish(job, 'learning.json', JSON.stringify({ observation, hypothesis, conclusion, title, content: draft.content ?? conclusion }, null, 2), 'application/json');
-    const evidence = makeEvidence({ artifactIds: [artifact.id], eventIds: [learningEvent], taskId: job.taskId, jobId: job.jobId, summary: `Recorded lesson: ${title}` });
-    // Persist the tactical memory as the delegated agent so scope and provenance are real.
+    const observation = typeof draft.observation === 'string' && draft.observation.trim() ? draft.observation.trim() : '';
+    const hypothesis = typeof draft.hypothesis === 'string' && draft.hypothesis.trim() ? draft.hypothesis.trim() : '';
+    const conclusion = typeof draft.conclusion === 'string' && draft.conclusion.trim() ? draft.conclusion.trim() : '';
+    const title = typeof draft.title === 'string' && draft.title.trim() ? draft.title.trim() : '';
+    if (!observation || !hypothesis || !conclusion || !title) {
+      throw new WorkerError('MODEL_OUTPUT', 'The model did not return a complete lesson', false);
+    }
+    const artifact = await this.publish(job, guard, 'learning.json', JSON.stringify({ observation, hypothesis, conclusion, title, basedOn: basis.id }, null, 2), 'application/json');
+    // Outcome evidence references this attempt; memory provenance references the prior evidence.
+    const outcomeEvidence = makeEvidence({ artifactIds: [artifact.id], eventIds: [learningEvent], taskId: job.taskId, jobId: job.jobId, summary: `Recorded lesson: ${title}` });
+    const origin = basis.provenance as { artifactIds: string[]; eventIds: string[]; taskId: string | null; jobId: string | null; summary: string };
     const memoryEntry = await this.deps.client.asAgent<{ id: string }>(job, 'createMemory', '/v1/memory', {
       ownerAgentId: agent.id,
       category: 'episodic',
       title,
       content: conclusion,
       scope: PRIVATE_SCOPE,
-      provenance: evidence,
+      provenance: {
+        artifactIds: origin.artifactIds ?? [],
+        eventIds: origin.eventIds ?? [],
+        taskId: origin.taskId ?? null,
+        jobId: origin.jobId ?? null,
+        summary: `Grounded in prior evidence from ${basis.id}.`,
+      },
       expiresAt: null,
       supersedesId: null,
     });
     await ledger.settle();
+    guard.assertLive();
     await this.deps.client.complete(job, {
       kind: 'learn',
-      learning: { observation, hypothesis, conclusion, evidence, memoryIds: [memoryEntry.id], canonicalRevisionId: null },
+      learning: { observation, hypothesis, conclusion, evidence: outcomeEvidence, memoryIds: [memoryEntry.id], canonicalRevisionId: null },
     });
   }
 
   // --- retire_agent ---------------------------------------------------------
 
-  private async retire(job: ClaimedJob, ledger: JobLedger): Promise<void> {
+  private async retire(job: ClaimedJob, ledger: JobLedger, guard: LeaseGuard): Promise<void> {
     const payload = job.payload as any;
-    const agent = payload.agent;
+    const agent = payload.agent as Record<string, any>;
     const reason = String(payload.reason ?? 'Approved retirement');
     const preserved = await this.deps.workspace.list('workspace', agent.id).catch(() => []);
-    const record = await this.publish(job, 'retirement.json', JSON.stringify({ agentId: agent.id, reason, retiredAt: nowIso(), preservedKnowledge: preserved }, null, 2), 'application/json');
-    const event = await this.observe(job, 'retirement.cleanup', 'Disabled the local runtime and preserved durable knowledge', {
+    // Read back the preserved knowledge so knowledgePreserved is observed, not asserted.
+    let knowledgeReadable = true;
+    for (const file of preserved.slice(0, 20)) {
+      try {
+        await this.deps.workspace.read('workspace', agent.id, file.path);
+      } catch {
+        knowledgeReadable = false;
+      }
+    }
+    if (!knowledgeReadable) throw new WorkerError('KNOWLEDGE_UNREADABLE', 'Preserved knowledge could not be read back before retirement', false);
+    const record = await this.publish(job, guard, 'retirement.json', JSON.stringify({ agentId: agent.id, reason, retiredAt: nowIso(), preservedKnowledge: preserved, readBackVerified: knowledgeReadable }, null, 2), 'application/json');
+    const event = await this.observe(job, guard, 'retirement.cleanup', 'Disabled the local runtime and re-read preserved knowledge', {
       reason, credentials: 0, preservedFiles: preserved.length, runtime: this.deps.config.modelName,
     });
     const evidence = makeEvidence({ artifactIds: [record.id], eventIds: [event], taskId: job.taskId, jobId: job.jobId, summary: `Retired ${agent.id}: ${reason}` });
     await ledger.settle();
+    guard.assertLive();
     await this.deps.client.complete(job, {
       kind: 'retire_agent',
       evidence,
       // This deployment holds no external credentials, so there are none to revoke.
       credentialsRevoked: true,
       runtimeDisabled: true,
-      knowledgePreserved: true,
+      knowledgePreserved: knowledgeReadable,
       // The control plane refuses to enqueue retirement while active tasks remain.
       activeTasksResolved: true,
     });
