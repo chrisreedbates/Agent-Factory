@@ -423,3 +423,152 @@ test('API recreation retains manifests, approvals, tasks, messages, memory, usag
     assert.ok(renewal.leaseExpiresAt);
   } finally { await h.close(); }
 });
+
+test('provisioning communication probe persists genuine manager records across retries and API restart without admitting work', async () => {
+  const h = await harness();
+  try {
+    const { hire } = await h.compile();
+    await h.approve(hire);
+    const job = await h.claim('provision_agent');
+    const path = `/v1/worker/jobs/${job.jobId}/verify-communication`;
+    const options = { role: 'worker' as const, key: 'communication-probe' };
+    const result = await h.ok('POST', path, h.lease(job), options);
+    assert.equal(result.message.sender.id, hire.agentId);
+    assert.equal(result.message.sender.kind, 'agent');
+    assert.equal(result.message.recipientId, 'human-ceo');
+    assert.equal(result.message.recipientKind, 'human');
+    assert.equal(result.message.actionable, false);
+    assert.equal(result.message.taskId, null);
+    assert.equal(result.escalation.agentId, hire.agentId);
+    assert.equal(result.escalation.requestedFrom, 'human-ceo');
+    assert.equal(result.escalation.status, 'OPEN');
+    assert.equal(result.escalation.taskId, null);
+    assert.deepEqual(await h.ok('POST', path, h.lease(job), options), result);
+    assert.deepEqual(await h.ok('POST', path, h.lease(job), { role: 'worker' }), result);
+    await h.restart();
+    assert.deepEqual(await h.ok('POST', path, h.lease(job), options), result);
+    const messages = await h.ok('GET', '/v1/messages');
+    const escalations = await h.ok('GET', '/v1/escalations');
+    assert.deepEqual(messages.find((row: Document) => row.id === result.message.id), result.message);
+    assert.deepEqual(escalations.find((row: Document) => row.id === result.escalation.id), result.escalation);
+    assert.equal(escalations.filter((row: Document) => row.agentId === hire.agentId).length, 1);
+    assert.deepEqual(await h.ok('GET', '/v1/tasks'), []);
+    assert.equal((await h.ok('GET', `/v1/agents/${hire.agentId}`)).agent.status, 'PROVISIONING');
+    assert.equal(await h.ok('POST', '/v1/worker/jobs/claim', { kinds: ['run_task'], leaseSeconds: 60 }, { role: 'worker' }), null);
+  } finally { await h.close(); }
+});
+
+test('provisioning communication probe rejects expiry and replaced fences even for a cached success', async () => {
+  const h = await harness();
+  try {
+    const { hire } = await h.compile();
+    await h.approve(hire);
+    const job = await h.claim('provision_agent');
+    const path = `/v1/worker/jobs/${job.jobId}/verify-communication`;
+    const options = { role: 'worker' as const, key: 'fenced-communication-probe' };
+    await h.ok('POST', path, h.lease(job), options);
+    h.advance(61_000);
+    assert.equal((await h.request('POST', path, h.lease(job), options)).statusCode, 409);
+    assert.equal((await h.request('POST', path, h.lease(job), { role: 'worker' })).statusCode, 409);
+    const replacement = await h.claim('provision_agent');
+    assert.equal(replacement.jobId, job.jobId);
+    assert.equal(replacement.attempt, job.attempt + 1);
+    assert.equal((await h.request('POST', path, h.lease(job), options)).statusCode, 409);
+    assert.equal((await h.request('POST', path, { leaseToken: replacement.leaseToken, attempt: job.attempt }, { role: 'worker' })).statusCode, 409);
+    const result = await h.ok('POST', path, h.lease(replacement), { role: 'worker' });
+    assert.equal(result.message.sender.id, hire.agentId);
+    assert.equal(result.escalation.status, 'OPEN');
+  } finally { await h.close(); }
+});
+
+test('provisioning probe is worker-only and cannot bypass ordinary pre-ACTIVE authority or accept injected identities', async () => {
+  const h = await harness();
+  try {
+    const { hire } = await h.compile();
+    await h.approve(hire);
+    const job = await h.claim('provision_agent');
+    const path = `/v1/worker/jobs/${job.jobId}/verify-communication`;
+    assert.equal((await h.request('POST', path, h.lease(job))).statusCode, 403);
+    assert.equal((await h.request('POST', path, { ...h.lease(job), agentId: 'unrelated-agent' }, { role: 'worker' })).statusCode, 400);
+    assert.equal((await h.request('POST', path, { ...h.lease(job), recipientId: 'unrelated-human', content: 'Arbitrary content', actionable: true }, { role: 'worker' })).statusCode, 400);
+    const attempts = [
+      ['/v1/messages', { recipientId: 'human-ceo', recipientKind: 'human', content: 'Ordinary message before activation.', actionable: false, inReplyTo: null, taskId: null }],
+      ['/v1/escalations', { agentId: hire.agentId, taskId: null, severity: 'medium', category: 'verification', situation: 'Ordinary escalation before activation.', attemptedActions: ['Attempted ordinary route.'], reason: 'Pre-ACTIVE restriction.', recommendation: 'Use restricted probe.', requestedFrom: 'human-ceo' }],
+      ['/v1/hiring-requests', proposalFixture],
+    ] as const;
+    for (const [url, body] of attempts) {
+      const response = await h.request('POST', url, body, delegated(job));
+      assert.ok(response.statusCode >= 400 && response.statusCode < 500, `${url}: ${response.body}`);
+    }
+    assert.deepEqual(await h.ok('GET', '/v1/escalations'), []);
+    assert.equal((await h.ok('GET', '/v1/hiring-requests')).length, 1);
+    assert.deepEqual(await h.ok('GET', '/v1/tasks'), []);
+    assert.equal((await h.ok('GET', `/v1/agents/${hire.agentId}`)).agent.status, 'PROVISIONING');
+  } finally { await h.close(); }
+});
+
+test('provisioning probe rejects wrong job kinds, cancellation, and approval-version drift without side effects', async () => {
+  const h = await harness();
+  try {
+    await h.ok('POST', '/v1/hiring-requests', proposalFixture);
+    const compileJob = await h.claim('compile_manifest');
+    assert.equal((await h.request('POST', `/v1/worker/jobs/${compileJob.jobId}/verify-communication`, h.lease(compileJob), { role: 'worker' })).statusCode, 403);
+    // A separate approved hire lets the test independently exercise a valid provisioning fence.
+    const secondProposal = structuredClone(proposalFixture);
+    secondProposal.role = 'Verification Boundary Analyst';
+    const { hire } = await h.compile(secondProposal);
+    await h.approve(hire);
+    const job = await h.claim('provision_agent');
+    const path = `/v1/worker/jobs/${job.jobId}/verify-communication`;
+    const options = { role: 'worker' as const, key: 'cancelled-probe-replay' };
+    const result = await h.ok('POST', path, h.lease(job), options);
+    await h.pg.query("UPDATE agents SET data = jsonb_set(data, '{cancellationRequested}', 'true'::jsonb) WHERE id = $1", [hire.agentId]);
+    assert.equal((await h.request('POST', path, h.lease(job), { role: 'worker' })).statusCode, 409);
+    assert.equal((await h.request('POST', path, h.lease(job), options)).statusCode, 409);
+    await h.pg.query("UPDATE agents SET data = jsonb_set(jsonb_set(data, '{cancellationRequested}', 'false'::jsonb), '{approvedManifestVersion}', to_jsonb($2::integer)) WHERE id = $1", [hire.agentId, hire.manifestVersion + 1]);
+    assert.equal((await h.request('POST', path, h.lease(job), { role: 'worker' })).statusCode, 409);
+    assert.equal((await h.request('POST', path, h.lease(job), options)).statusCode, 409);
+    assert.deepEqual(await h.ok('GET', '/v1/escalations'), [result.escalation]);
+    assert.deepEqual(await h.ok('GET', '/v1/tasks'), []);
+    assert.equal((await h.ok('GET', '/v1/messages')).filter((row: Document) => row.sender.id === hire.agentId).length, 1);
+  } finally { await h.close(); }
+});
+
+test('approved reconfiguration probe targets its current agent manager and rejects another agent job lease', async () => {
+  const h = await harness();
+  try {
+    const manager = await h.activate();
+    const childProposal = structuredClone(proposalFixture);
+    childProposal.role = 'Manager Communication Analyst';
+    childProposal.proposedManagerId = manager.id;
+    childProposal.proposedManagerKind = 'agent';
+    const child = await h.activate(childProposal);
+    const manifest = structuredClone(child.manifest);
+    manifest.mission.primary += ' Verify the reconfigured communication path.';
+    const proposal = await h.ok('POST', `/v1/agents/${child.id}/lifecycle`, {
+      action: 'reconfigure', expectedVersion: child.version, reason: 'Review communication after reconfiguration.', manifest,
+    });
+    await h.ok('POST', `/v1/governance/${proposal.governance.id}/decision`, {
+      decision: 'approve', expectedVersion: proposal.governance.version, reason: 'Reviewed the exact reconfigured manifest.',
+    });
+    const job = await h.claim('reconfigure_agent');
+    const path = `/v1/worker/jobs/${job.jobId}/verify-communication`;
+    const result = await h.ok('POST', path, h.lease(job), { role: 'worker' });
+    assert.equal(result.message.sender.id, child.id);
+    assert.equal(result.message.recipientId, manager.id);
+    assert.equal(result.message.recipientKind, 'agent');
+    assert.equal(result.message.actionable, false);
+    assert.equal(result.escalation.requestedFrom, manager.id);
+    assert.equal(result.escalation.status, 'OPEN');
+    assert.equal((await h.ok('GET', `/v1/agents/${child.id}`)).agent.status, 'RECONFIGURING');
+    assert.deepEqual(await h.ok('GET', '/v1/tasks'), []);
+    const otherProposal = structuredClone(proposalFixture);
+    otherProposal.role = 'Other Provisioning Analyst';
+    const { hire } = await h.compile(otherProposal);
+    await h.approve(hire);
+    const otherJob = await h.claim('provision_agent');
+    assert.notEqual(otherJob.agentId, job.agentId);
+    assert.equal((await h.request('POST', path, h.lease(otherJob), { role: 'worker' })).statusCode, 409);
+    assert.deepEqual(await h.ok('GET', '/v1/escalations'), [result.escalation]);
+  } finally { await h.close(); }
+});

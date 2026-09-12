@@ -48,3 +48,27 @@ test('checked-in OpenAPI matches the runtime contract', async () => {
  const published=JSON.parse(await readFile(new URL('../openapi.json',import.meta.url),'utf8'));
  assert.deepEqual(published,JSON.parse(JSON.stringify(openApi())));
 });
+
+test('provisioning communication admits only a fenced lease and requires worker authentication', () => {
+ const route=routes.find(r=>r.operationId==='verifyProvisionCommunication')!;
+ assert.equal(route.url,'/v1/worker/jobs/:id/verify-communication');
+ assert.equal(route.method,'POST');
+ assert.equal(route.auth,'worker');
+ const lease={leaseToken:'verification-lease',attempt:1};
+ assert.ok(Value.Check(route.schema.body!,lease));
+ for(const extra of [{agentId:'other-agent'},{recipientId:'other-human'},{content:'arbitrary instruction'},{sender:{id:'other-agent'}}]) {
+  assert.equal(Value.Check(route.schema.body!,{...lease,...extra}),false);
+ }
+ assert.equal(Value.Check(route.schema.body!,{leaseToken:lease.leaseToken}),false);
+ assert.equal(Value.Check(route.schema.body!,{...lease,attempt:0}),false);
+ assert.equal(Value.Check(route.schema.headers!,{}),false);
+ assert.ok(Value.Check(route.schema.headers!,{'idempotency-key':'verify-once'}));
+ const operation=openApi().paths['/v1/worker/jobs/{id}/verify-communication'].post as {security:unknown};
+ assert.deepEqual(operation.security,[{workerBearer:[]}]);
+});
+
+test('published fixtures match the current version and runtime examples', async () => {
+ const published=JSON.parse(await readFile(new URL('../fixtures.json',import.meta.url),'utf8'));
+ assert.equal(published.contractVersion,CONTRACT_VERSION);
+ assert.deepEqual(published.routes,JSON.parse(JSON.stringify(routeFixtures)));
+});
