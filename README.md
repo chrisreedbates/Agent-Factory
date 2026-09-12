@@ -1,6 +1,6 @@
 # Agent Factory
 
-Agent Factory is a governed control plane for persistent AI employees and bounded consultants. The full product vision is in [Spec.md](Spec.md). Issue [#1](https://github.com/chrisreedbates/Agent-Factory/issues/1) implements the API and shared contracts; runtime and console implementations are separate lanes.
+Agent Factory is a governed control plane for persistent AI employees and bounded consultants. The full product vision is in [Spec.md](Spec.md). Issue [#1](https://github.com/chrisreedbates/Agent-Factory/issues/1) implements the API and shared contracts; runtime and console implementations are separate lanes. Issue [#2](https://github.com/chrisreedbates/Agent-Factory/issues/2) implements the worker runtime in `apps/worker`.
 
 ## Environment
 
@@ -25,6 +25,15 @@ pnpm check:combined
 ```
 
 Core checks are independent. The combined check fails explicitly until sibling runtime, UI and E2E implementations exist. The worker/web bootstrap tests validate package wiring only.
+
+## Worker runtime
+
+`apps/worker` is the Machine 2 runtime. It polls the control plane at `POST /v1/worker/jobs/claim` and executes the six fenced job kinds (`compile_manifest`, `provision_agent`, `reconfigure_agent`, `run_task`, `learn`, `retire_agent`). It never opens PostgreSQL; every mutation goes through `/v1` with the worker credential and the current lease. Mutating calls use a deterministic `Idempotency-Key`, budget is reserved before model calls and settled afterwards, and artifacts are written to the shared workspace volume and published by hash. See [docs/runtime/README.md](docs/runtime/README.md) for configuration and the job protocol, and [docs/runtime/self-audit.md](docs/runtime/self-audit.md) for the Machine 2 verification boundary.
+
+```sh
+pnpm --filter @agent-factory/worker dev    # poll and execute jobs in a loop
+pnpm --filter @agent-factory/worker once   # run a single bounded pass (useful for smoke checks)
+```
 
 ## Contracts and handoff
 
