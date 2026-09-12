@@ -883,6 +883,7 @@ export class JobRunner {
         'Respond with a single JSON object:',
         '{"passed":true,"criteria":[{"criterion":"<exact supplied criterion>","passed":true,"evidenceIds":["..."]}]}.',
         'Return each supplied criterion exactly once, copied verbatim, citing only supplied evidence ids.',
+        'Copy every evidence ID in full, byte-for-byte, from the supplied evidence. Never shorten, abbreviate, or reformat an ID; prefixes are invalid.',
       ].join(' '),
       payload: {
         criteria: manifest.evaluation.criteria,
@@ -1051,6 +1052,7 @@ export class JobRunner {
         'Respond with a single JSON object:',
         '{"passed":true,"deliverableMatches":true,"objectiveAddressed":true,"constraintsSatisfied":true,"criteria":[{"criterion":"<exact supplied criterion>","passed":true,"evidenceIds":["..."]}]}.',
         'Return each supplied criterion exactly once, copied verbatim, citing only supplied evidence ids.',
+        'Copy every evidence ID in full, byte-for-byte, from the supplied evidence. Never shorten, abbreviate, or reformat an ID; prefixes are invalid.',
         'Set a flag to false rather than approving work the evidence does not support.',
       ].join(' '),
       payload: {
